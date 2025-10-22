@@ -12,7 +12,7 @@
 
 A live version of the application is deployed on shinyapps.io.
 
-**[🚀 Launch MicrobeStudio](https://shanptom-gopica.share.connect.posit.cloud)**
+**[🚀 Launch MicrobeStudio](https://shanptom.shinyapps.io/MicrobeStudio)**
 
 ---
 ## 🚀 Features
@@ -46,6 +46,7 @@ cd PhyloFlow
 
 ### Step 2: Install Dependencies
 Run the following script from the R console to install all required dependencies:
+
 ```R
 source("scripts/install_dep.R")
 ```
@@ -56,9 +57,10 @@ It also installs the **ragg** package, which MicrobeStudio uses to render plots 
 Once all dependencies are installed, launch the application in one of two ways:
 1. **From RStudio**: Open the `app.R` file and click the "Run App" button in the top-right corner of the editor panel.
 2. **From the R Console**:
-   ```R
-   shiny::runApp("app.R")
-   ```
+
+```R
+shiny::runApp("app.R")
+```
 
 The application will open in a new window or your default web browser.
 
