@@ -1,0 +1,12 @@
+name: MicrobeStudio
+title: MicrobeStudio
+username: shanptom
+account: shanptom
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15838944
+bundleId: 11071963
+url: https://shanptom.shinyapps.io/MicrobeStudio/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
