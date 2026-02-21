@@ -8,9 +8,7 @@
 
 ---
 
-## Demo
-
-A live version of the application is deployed on shinyapps.io.
+## Live App
 
 **[🚀 Launch MicrobeStudio](https://microbestudio.pipettestopixels.com/)**
 
