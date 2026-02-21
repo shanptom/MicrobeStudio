@@ -40,8 +40,8 @@ A live version of the application is deployed on shinyapps.io.
 ### Step 1: Clone the Repository
 Clone this repository to your local machine to get started:
 ```bash
-git clone https://github.com/shanptom/PhyloFlow.git
-cd PhyloFlow
+git clone https://github.com/shanptom/microbestudio.git
+cd MicrobeStudio
 ```
 
 ### Step 2: Install Dependencies
