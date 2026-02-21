@@ -1,8 +1,7 @@
 # Beta Diversity Module Server
 # Handles ordination plots, PERMANOVA, and t-SNE
 
-beta_diversity_server <- function(input, output, session, final_physeq, show_tsne, analysis_ready) {
-
+beta_diversity_server <- function(input, output, session, final_physeq, show_tsne, analysis_ready, telemetry = NULL) {
   # Color selector
   output$beta_color_selector <- renderUI({
     req(final_physeq())
@@ -41,23 +40,24 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
       df <- as.data.frame(sample_data(final_physeq()))
       choices <- unique(df[[input$beta_facet]])
       selectizeInput("beta_facet_order", "Custom Facet Order (drag to reorder):",
-                     choices = choices, selected = choices, multiple = TRUE,
-                     options = list(plugins = list('drag_drop')))
+        choices = choices, selected = choices, multiple = TRUE,
+        options = list(plugins = list("drag_drop"))
+      )
     } else {
       return(NULL)
     }
   })
 
-  # Beta diversity ordination plot
-  output$betaPlot <- renderPlot({
-    if (!analysis_ready() || is.null(final_physeq())) return(NULL)
-    req(input$beta_dist, input$beta_ord, input$beta_shape_size, input$beta_label_size)
+  # Cached ordination computation (avoids recomputing distance + ordination twice)
+  ordination_result <- reactive({
+    req(final_physeq(), input$beta_dist, input$beta_ord)
 
     # Guard UniFrac when phylogeny is missing
     if (input$beta_dist %in% c("unifrac", "wunifrac")) {
-      if (is.null(phyloseq::phy_tree(final_physeq(), errorIfNULL = FALSE))) {
-        validate(need(FALSE, "UniFrac requires a phylogenetic tree in the dataset."))
-      }
+      validate(need(
+        !is.null(phyloseq::phy_tree(final_physeq(), errorIfNULL = FALSE)),
+        "UniFrac requires a phylogenetic tree in the dataset."
+      ))
     }
 
     # Seed for stochastic ordinations (e.g., NMDS)
@@ -65,16 +65,29 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
       set.seed(as.integer(input$ord_seed))
     }
 
-    dist <- distance(final_physeq(), method = input$beta_dist)
-    ord <- ordinate(final_physeq(), method = input$beta_ord, distance = dist)
+    dist_mat <- distance(final_physeq(), method = input$beta_dist)
+    ord_obj <- ordinate(final_physeq(), method = input$beta_ord, distance = dist_mat)
+    list(dist = dist_mat, ord = ord_obj)
+  })
+
+  # Beta diversity ordination plot
+  output$betaPlot <- renderPlot({
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return(NULL)
+    }
+    req(input$beta_dist, input$beta_ord, input$beta_shape_size, input$beta_label_size)
+
+    ord_res <- ordination_result()
+    ord <- ord_res$ord
 
     # Safely check color and shape inputs
     color_val <- if (!is.null(input$beta_color) && input$beta_color != "None") input$beta_color else NULL
     shape_val <- if (!is.null(input$beta_shape) && input$beta_shape != "None") input$beta_shape else NULL
 
     p <- plot_ordination(final_physeq(), ord,
-                         color = color_val,
-                         shape = shape_val) +
+      color = color_val,
+      shape = shape_val
+    ) +
       theme_minimal()
 
     # Point geometry with alpha and optional jitter
@@ -83,19 +96,23 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     } else {
       ggplot2::position_identity()
     }
-    p <- p + geom_point(size = input$beta_shape_size,
-                        alpha = if (is.null(input$beta_alpha)) 0.9 else input$beta_alpha,
-                        position = pos)
+    p <- p + geom_point(
+      size = input$beta_shape_size,
+      alpha = if (is.null(input$beta_alpha)) 0.9 else input$beta_alpha,
+      position = pos
+    )
 
     # Labels only if selected
     if (!is.null(input$beta_label) && input$beta_label != "None") {
       if (!is.null(input$beta_label_repel) && isTRUE(input$beta_label_repel)) {
         p <- p + ggrepel::geom_text_repel(aes_string(label = input$beta_label),
-                                          size = input$beta_label_text_size)
+          size = input$beta_label_text_size
+        )
       } else {
         p <- p + geom_text(aes_string(label = input$beta_label),
-                           size = input$beta_label_text_size,
-                           vjust = -1)
+          size = input$beta_label_text_size,
+          vjust = -1
+        )
       }
     }
 
@@ -118,19 +135,35 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     p
   })
 
-  # Ordination info text (e.g., NMDS stress, PCoA variance)
+  # Ordination info text (uses cached ordination result)
   output$ordination_info <- renderText({
-    if (!analysis_ready() || is.null(final_physeq())) return("")
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return("")
+    }
     req(input$beta_dist, input$beta_ord)
-    dist <- tryCatch(distance(final_physeq(), method = input$beta_dist), error = function(e) NULL)
-    if (is.null(dist)) return("")
-    ord <- tryCatch(ordinate(final_physeq(), method = input$beta_ord, distance = dist), error = function(e) NULL)
-    if (is.null(ord)) return("")
+
+    ord_res <- tryCatch(ordination_result(), error = function(e) NULL)
+    if (is.null(ord_res)) {
+      return("")
+    }
+    ord <- ord_res$ord
 
     info <- NULL
     if (toupper(input$beta_ord) == "NMDS" && !is.null(ord$stress)) {
-      info <- paste0("NMDS stress = ", round(ord$stress, 3))
-      if (!is.na(ord$stress) && ord$stress > 0.2) info <- paste0(info, " (high stress)")
+      stress_val <- round(ord$stress, 4)
+      # Clarke (1993) interpretation scale for NMDS stress
+      quality <- if (is.na(stress_val)) {
+        "unknown"
+      } else if (stress_val < 0.05) {
+        "Excellent representation"
+      } else if (stress_val < 0.1) {
+        "Good representation"
+      } else if (stress_val < 0.2) {
+        "Fair — interpret with caution"
+      } else {
+        "Poor — do not interpret"
+      }
+      info <- paste0("NMDS stress = ", stress_val, " (", quality, ")")
     } else if (toupper(input$beta_ord) %in% c("PCOA", "MDS")) {
       # Try to extract variance explained
       rel <- tryCatch(ord$values$Relative_eig, error = function(e) NULL)
@@ -144,7 +177,9 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
 
   # Analysis summary
   output$analysis_summary <- renderText({
-    if (!analysis_ready() || is.null(final_physeq())) return("")
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return("")
+    }
     parts <- c(
       paste0("Distance = ", input$beta_dist),
       paste0("Ordination = ", input$beta_ord),
@@ -163,16 +198,20 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
 
     if (length(categorical_cols) == 0) {
       return(tagList(
-        div(class = "ui warning message",
-            "No categorical metadata columns found. Add a grouping variable to run PERMANOVA."),
+        div(
+          class = "ui warning message",
+          "No categorical metadata columns found. Add a grouping variable to run PERMANOVA."
+        ),
         selectInput("permanova_group", "Select grouping variable:",
-                    choices = character(0), selected = NULL)
+          choices = character(0), selected = NULL
+        )
       ))
     }
 
     selectInput("permanova_group", "Select grouping variable:",
-                choices = categorical_cols,
-                selected = categorical_cols[1])
+      choices = categorical_cols,
+      selected = categorical_cols[1]
+    )
   })
 
   permanova_result <- reactiveVal()
@@ -180,119 +219,143 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
 
   # Run PERMANOVA (vegan::adonis2 with explicit alignment)
   observeEvent(input$run_permanova, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "beta_run_permanova")
+    }
     req(final_physeq(), !is.null(input$permanova_group), nzchar(input$permanova_group))
 
-    tryCatch({
-      shinyjs::disable("run_permanova")
-      on.exit(shinyjs::enable("run_permanova"), add = TRUE)
-      ps <- final_physeq()
+    withProgress(message = "Running PERMANOVA...", value = 0, {
+      tryCatch(
+        {
+          shinyjs::disable("run_permanova")
+          on.exit(shinyjs::enable("run_permanova"), add = TRUE)
+          incProgress(0.1, detail = "Preparing distance matrix")
+          ps <- final_physeq()
 
-      # Subset to samples with non-missing group values
-      md <- as.data.frame(sample_data(ps), stringsAsFactors = FALSE)
-      grp_name <- input$permanova_group
-      if (!grp_name %in% colnames(md)) stop("Selected grouping variable not found in metadata")
-      keep <- !is.na(md[[grp_name]])
-      ps_sub <- prune_samples(keep, ps)
+          # Subset to samples with non-missing group values
+          md <- as.data.frame(sample_data(ps), stringsAsFactors = FALSE)
+          grp_name <- input$permanova_group
+          if (!grp_name %in% colnames(md)) stop("Selected grouping variable not found in metadata")
+          keep <- !is.na(md[[grp_name]])
+          ps_sub <- prune_samples(keep, ps)
 
-      md_sub <- as.data.frame(sample_data(ps_sub), stringsAsFactors = FALSE)
-      grp_vec <- factor(md_sub[[grp_name]])
-      if (nlevels(grp_vec) < 2) stop("Grouping variable must have at least two levels")
+          md_sub <- as.data.frame(sample_data(ps_sub), stringsAsFactors = FALSE)
+          grp_vec <- factor(md_sub[[grp_name]])
+          if (nlevels(grp_vec) < 2) stop("Grouping variable must have at least two levels")
 
-      # Use PERMANOVA-specific distance if available; otherwise fall back to ordination distance
-      method <- if (!is.null(input$permanova_dist)) input$permanova_dist else if (!is.null(input$beta_dist)) input$beta_dist else "bray"
-      if (method %in% c("unifrac", "wunifrac") && is.null(phyloseq::phy_tree(ps_sub, errorIfNULL = FALSE))) {
-        stop("UniFrac requires a phylogenetic tree in the dataset.")
-      }
-      dist_obj <- as.dist(phyloseq::distance(ps_sub, method = method))
+          # Use PERMANOVA-specific distance if available; otherwise fall back to ordination distance
+          method <- if (!is.null(input$permanova_dist)) input$permanova_dist else if (!is.null(input$beta_dist)) input$beta_dist else "bray"
+          if (method %in% c("unifrac", "wunifrac") && is.null(phyloseq::phy_tree(ps_sub, errorIfNULL = FALSE))) {
+            stop("UniFrac requires a phylogenetic tree in the dataset.")
+          }
+          dist_obj <- as.dist(phyloseq::distance(ps_sub, method = method))
 
-      # Explicitly align metadata rows to distance labels
-      labs <- labels(dist_obj)
-      metadata <- data.frame(group = grp_vec, row.names = sample_names(ps_sub))
-      metadata <- metadata[labs, , drop = FALSE]
+          # Explicitly align metadata rows to distance labels
+          labs <- labels(dist_obj)
+          metadata <- data.frame(group = grp_vec, row.names = sample_names(ps_sub))
+          metadata <- metadata[labs, , drop = FALSE]
 
-      # Helper to extract F and R2 robustly from adonis2 results
-      extract_stats <- function(ad2_res) {
-        df <- as.data.frame(ad2_res)
-        if (!nrow(df)) return(list(F = NA_real_, R2 = NA_real_, p = NA_real_))
-        # The first row corresponds to the model term 'group'
-        f_col <- if ("F" %in% colnames(df)) "F" else if ("F.Model" %in% colnames(df)) "F.Model" else NA
-        Fval <- if (!is.na(f_col)) suppressWarnings(as.numeric(df[[f_col]][1])) else NA_real_
-        R2val <- suppressWarnings(as.numeric(df[["R2"]][1]))
-        p_col_name <- "Pr(>F)"
-        pval <- if (p_col_name %in% colnames(df)) suppressWarnings(as.numeric(df[[p_col_name]][1])) else NA_real_
-        list(F = Fval, R2 = R2val, p = pval)
-      }
+          # Helper to extract F and R2 robustly from adonis2 results
+          extract_stats <- function(ad2_res) {
+            df <- as.data.frame(ad2_res)
+            if (!nrow(df)) {
+              return(list(F = NA_real_, R2 = NA_real_, p = NA_real_))
+            }
+            # The first row corresponds to the model term 'group'
+            f_col <- if ("F" %in% colnames(df)) "F" else if ("F.Model" %in% colnames(df)) "F.Model" else NA
+            Fval <- if (!is.na(f_col)) suppressWarnings(as.numeric(df[[f_col]][1])) else NA_real_
+            R2val <- suppressWarnings(as.numeric(df[["R2"]][1]))
+            p_col_name <- "Pr(>F)"
+            pval <- if (p_col_name %in% colnames(df)) suppressWarnings(as.numeric(df[[p_col_name]][1])) else NA_real_
+            list(F = Fval, R2 = R2val, p = pval)
+          }
 
-      # Global PERMANOVA (not shown, but could be reported if needed)
-      # global_res <- vegan::adonis2(dist_obj ~ group, data = metadata, permutations = perm_n)
+          # Global PERMANOVA (not shown, but could be reported if needed)
+          # global_res <- vegan::adonis2(dist_obj ~ group, data = metadata, permutations = perm_n)
 
-      # Optional: PERMDISP (homogeneity of dispersion)
-      if (!is.null(input$permdisp_enable) && isTRUE(input$permdisp_enable)) {
-        bd <- vegan::betadisper(dist_obj, metadata$group)
-        perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999
-        pd <- vegan::permutest(bd, permutations = perm_n)
-        pval_pd <- tryCatch(pd$tab[1, "Pr(>F)"], error = function(e) NA_real_)
-        permdisp_text(paste0("Global test p-value = ", signif(as.numeric(pval_pd), 4)))
-      } else {
-        permdisp_text("")
-      }
+          # Optional: PERMDISP (homogeneity of dispersion)
+          if (!is.null(input$permdisp_enable) && isTRUE(input$permdisp_enable)) {
+            bd <- vegan::betadisper(dist_obj, metadata$group)
+            perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999
+            pd <- vegan::permutest(bd, permutations = perm_n)
+            pval_pd <- tryCatch(pd$tab[1, "Pr(>F)"], error = function(e) NA_real_)
+            permdisp_text(paste0("Global test p-value = ", signif(as.numeric(pval_pd), 4)))
+          } else {
+            permdisp_text("")
+          }
 
-      # Pairwise PERMANOVA across group levels
-      lvls <- levels(metadata$group)
-      if (length(lvls) < 2) stop("Grouping variable must have at least two levels")
+          # Pairwise PERMANOVA across group levels
+          lvls <- levels(metadata$group)
+          if (length(lvls) < 2) stop("Grouping variable must have at least two levels")
 
-      pairs <- utils::combn(lvls, 2, simplify = FALSE)
-      rows <- lapply(pairs, function(pr) {
-        # Subset samples belonging to the two groups
-        keep_samples <- rownames(metadata)[metadata$group %in% pr]
-        ps_pair <- prune_samples(keep_samples, ps_sub)
-        dist_pair <- as.dist(phyloseq::distance(ps_pair, method = method))
-        labs_p <- labels(dist_pair)
-        md_pair <- as.data.frame(sample_data(ps_pair), stringsAsFactors = FALSE)
-        md_p <- data.frame(group = factor(md_pair[[grp_name]], levels = pr),
-                           row.names = sample_names(ps_pair))
-        # Optional strata
-        if (!is.null(input$permanova_strata) && nzchar(input$permanova_strata) && input$permanova_strata != "None") {
-          md_p$Strata <- factor(md_pair[[input$permanova_strata]])
+          pairs <- utils::combn(lvls, 2, simplify = FALSE)
+          rows <- lapply(pairs, function(pr) {
+            # Subset samples belonging to the two groups
+            keep_samples <- rownames(metadata)[metadata$group %in% pr]
+            ps_pair <- prune_samples(keep_samples, ps_sub)
+            dist_pair <- as.dist(phyloseq::distance(ps_pair, method = method))
+            labs_p <- labels(dist_pair)
+            md_pair <- as.data.frame(sample_data(ps_pair), stringsAsFactors = FALSE)
+            md_p <- data.frame(
+              group = factor(md_pair[[grp_name]], levels = pr),
+              row.names = sample_names(ps_pair)
+            )
+            # Optional strata
+            if (!is.null(input$permanova_strata) && nzchar(input$permanova_strata) && input$permanova_strata != "None") {
+              md_p$Strata <- factor(md_pair[[input$permanova_strata]])
+            }
+            md_p <- md_p[labs_p, , drop = FALSE]
+            perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999
+            if (!is.null(md_p$Strata)) {
+              ad2 <- vegan::adonis2(dist_pair ~ group, data = md_p, permutations = perm_n, strata = md_p$Strata)
+            } else {
+              ad2 <- vegan::adonis2(dist_pair ~ group, data = md_p, permutations = perm_n)
+            }
+            st <- extract_stats(ad2)
+            data.frame(
+              Groups = paste(pr[1], "vs", pr[2]),
+              measure = method,
+              F = st$F,
+              R2 = st$R2,
+              p.value = st$p,
+              stringsAsFactors = FALSE
+            )
+          })
+
+          out <- do.call(rbind, rows)
+          # Adjust p-values using selected method; map to valid p.adjust keywords
+          padj <- if (!is.null(input$p_adjust_method)) input$p_adjust_method else "BH"
+          method <- if (padj %in% c("BH", "BY")) padj else tolower(padj)
+          out$p.adjusted <- p.adjust(out$p.value, method = method)
+          # Add significance codes based on adjusted p-values
+          sig_code <- function(p) {
+            if (is.na(p)) {
+              return("")
+            }
+            if (p <= 0.001) {
+              return("***")
+            }
+            if (p <= 0.01) {
+              return("**")
+            }
+            if (p <= 0.05) {
+              return("*")
+            }
+            if (p <= 0.1) {
+              return(".")
+            }
+            return("")
+          }
+          out$Significance <- vapply(out$p.adjusted, sig_code, character(1))
+          incProgress(0.9, detail = "Complete")
+
+          permanova_result(out)
+        },
+        error = function(e) {
+          permanova_result(paste("PERMANOVA error:", e$message))
         }
-        md_p <- md_p[labs_p, , drop = FALSE]
-        perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999
-        if (!is.null(md_p$Strata)) {
-          ad2 <- vegan::adonis2(dist_pair ~ group, data = md_p, permutations = perm_n, strata = md_p$Strata)
-        } else {
-          ad2 <- vegan::adonis2(dist_pair ~ group, data = md_p, permutations = perm_n)
-        }
-        st <- extract_stats(ad2)
-        data.frame(
-          Groups = paste(pr[1], "vs", pr[2]),
-          measure = method,
-          F = st$F,
-          R2 = st$R2,
-          p.value = st$p,
-          stringsAsFactors = FALSE
-        )
-      })
-
-      out <- do.call(rbind, rows)
-      # Adjust p-values using selected method; map to valid p.adjust keywords
-      padj <- if (!is.null(input$p_adjust_method)) input$p_adjust_method else "BH"
-      method <- if (padj %in% c("BH", "BY")) padj else tolower(padj)
-      out$p.adjusted <- p.adjust(out$p.value, method = method)
-      # Add significance codes based on adjusted p-values
-      sig_code <- function(p) {
-        if (is.na(p)) return("")
-        if (p <= 0.001) return("**")
-        if (p <= 0.01) return("**")
-        if (p <= 0.05) return("*")
-        if (p <= 0.1) return(".")
-        return("")
-      }
-      out$Significance <- vapply(out$p.adjusted, sig_code, character(1))
-
-      permanova_result(out)
-    }, error = function(e) {
-      permanova_result(paste("PERMANOVA error:", e$message))
-    })
+      ) # end tryCatch
+    }) # end withProgress
   })
 
   # PERMANOVA results table and download
@@ -300,10 +363,10 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     req(permanova_result())
     df <- permanova_result()
     if (is.data.frame(df)) {
-      DT::datatable(df, rownames = FALSE, options = list(pageLength = 10, order = list(list(5, 'asc'))))
+      DT::datatable(df, rownames = FALSE, options = list(pageLength = 10, order = list(list(5, "asc"))))
     } else {
       # If error string
-      DT::datatable(data.frame(Message = as.character(df)), rownames = FALSE, options = list(dom = 't'))
+      DT::datatable(data.frame(Message = as.character(df)), rownames = FALSE, options = list(dom = "t"))
     }
   })
 
@@ -327,7 +390,8 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     df <- as.data.frame(sample_data(final_physeq()))
     categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
     selectInput("permanova_strata", "Permutation strata (optional):",
-                choices = c("None", categorical_cols), selected = "None")
+      choices = c("None", categorical_cols), selected = "None"
+    )
   })
 
   # PERMDISP info output (define before outputOptions)
@@ -342,8 +406,9 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
     selected_val <- if (length(categorical_cols) >= 2) categorical_cols[2] else categorical_cols[1] %||% "None"
     selectInput("tsne_group", "Group samples by:",
-                choices = categorical_cols,
-                selected = selected_val)
+      choices = categorical_cols,
+      selected = selected_val
+    )
   })
 
   # t-SNE perplexity selector
@@ -352,10 +417,11 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
 
     n_samples <- nsamples(final_physeq())
     max_perplexity <- floor((n_samples - 1) / 3)
-    max_perplexity <- max(5, min(max_perplexity, 50))  # reasonable bounds
+    max_perplexity <- max(5, min(max_perplexity, 50)) # reasonable bounds
 
     sliderInput("tsne_perplexity", "Perplexity:",
-                min = 0, max = max_perplexity, value = 2)
+      min = 0, max = max_perplexity, value = 2
+    )
   })
 
   # t-SNE label selector
@@ -364,22 +430,25 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     df <- as.data.frame(sample_data(final_physeq()))
     categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
     selectInput("tsne_label", "Label samples by:",
-                choices = c("None", categorical_cols),
-                selected = "None")
+      choices = c("None", categorical_cols),
+      selected = "None"
+    )
   })
 
   # t-SNE plot
   output$tsne_plot <- renderPlot({
     req(input$run_tsne)
 
-    if (!analysis_ready() || is.null(final_physeq())) return(NULL)
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return(NULL)
+    }
 
     # Require analysis to be ready and inputs
     req(input$tsne_group, analysis_ready())
 
     # Seed for t-SNE
     if (!is.null(input$tsne_seed) && !is.na(input$tsne_seed)) {
-      set.seed(as.integer(input$tsne_seed))
+      withr::local_seed(as.integer(input$tsne_seed))
     }
 
     p <- tsne_phyloseq(
@@ -395,6 +464,9 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
 
   # t-SNE event handlers
   observeEvent(input$run_tsne, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "beta_run_tsne")
+    }
     show_tsne(TRUE)
   })
 
@@ -447,5 +519,31 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     updateSelectInput(session, "p_adjust_method", selected = "BH")
     updateCheckboxInput(session, "permdisp_enable", value = FALSE)
   })
-  
+
+  # Download ordination plot as PDF
+  output$download_ordination_plot <- downloadHandler(
+    filename = function() paste0("ordination_plot_", Sys.Date(), ".pdf"),
+    content = function(file) {
+      tryCatch(
+        {
+          ord_res <- ordination_result()
+          color_val <- if (!is.null(input$beta_color) && input$beta_color != "None") input$beta_color else NULL
+          shape_val <- if (!is.null(input$beta_shape) && input$beta_shape != "None") input$beta_shape else NULL
+          p <- plot_ordination(final_physeq(), ord_res$ord, color = color_val, shape = shape_val) +
+            theme_minimal() +
+            geom_point(size = input$beta_shape_size, alpha = if (is.null(input$beta_alpha)) 0.9 else input$beta_alpha) +
+            theme(
+              axis.text = element_text(size = input$beta_label_size),
+              axis.title = element_text(size = input$beta_label_size),
+              legend.text = element_text(size = input$beta_label_size),
+              legend.title = element_text(size = input$beta_label_size)
+            )
+          ggplot2::ggsave(file, plot = p, width = 10, height = 8, device = "pdf")
+        },
+        error = function(e) {
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

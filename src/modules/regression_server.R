@@ -2,7 +2,6 @@
 # Handles taxon-environment regression analysis
 
 regression_server <- function(input, output, session, final_physeq, analysis_ready) {
-
   # Build a single microeco dataset from final_physeq for this module
   meco_dataset <- reactive({
     req(analysis_ready(), final_physeq())
@@ -18,27 +17,35 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
     st <- meco_dataset()$sample_table
     numeric_cols <- names(st)[sapply(st, is.numeric)]
     if (length(numeric_cols) == 0) {
-      return(div(class = "ui warning message",
-                 tags$i(class = "exclamation triangle icon"),
-                 "No numeric metadata columns found. Please provide numeric environmental variables."))
+      return(div(
+        class = "ui warning message",
+        tags$i(class = "exclamation triangle icon"),
+        "No numeric metadata columns found. Please provide numeric environmental variables."
+      ))
     }
-    div(class = "field",
+    div(
+      class = "field",
       tags$label("Environmental Variable"),
-      selectInput("env_var", NULL, choices = numeric_cols,
-                  selected = numeric_cols[1])
+      selectInput("env_var", NULL,
+        choices = numeric_cols,
+        selected = numeric_cols[1]
+      )
     )
   })
 
   # Update environment variable selector when data is ready and tab is active (numeric-only)
   observe({
     req(analysis_ready(), final_physeq())
-    if (!identical(input$current_tab, "regression")) return()
+    if (!identical(input$current_tab, "regression")) {
+      return()
+    }
     # Use numeric columns from microeco dataset's sample_table
     st <- meco_dataset()$sample_table
     numeric_cols <- names(st)[sapply(st, is.numeric)]
     updateSelectInput(session, "env_var",
-                      choices = numeric_cols,
-                      selected = if (length(numeric_cols) > 0) numeric_cols[1] else NULL)
+      choices = numeric_cols,
+      selected = if (length(numeric_cols) > 0) numeric_cols[1] else NULL
+    )
   })
 
   # Taxonomic rank selector for regression
@@ -46,7 +53,8 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
     req(final_physeq())
     ranks <- colnames(as.data.frame(tax_table(final_physeq())))
     selectInput("tax_rank_regression", "Select Taxonomic Rank:",
-                choices = ranks, selected = tail(ranks, 1))
+      choices = ranks, selected = tail(ranks, 1)
+    )
   })
 
   # Taxa selector updates based on selected rank
@@ -58,7 +66,8 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
 
     taxa_names <- rownames(rank_table)
     selectInput("selected_taxon", "Select Taxon (Lineage):",
-                choices = taxa_names, selected = taxa_names[1])
+      choices = taxa_names, selected = taxa_names[1]
+    )
   })
 
   # Regression group selector
@@ -72,7 +81,9 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
   # Regression plot
   output$regression_plot <- renderPlot({
     req(input$run_scatter)
-    if (!analysis_ready() || is.null(final_physeq())) return(NULL)
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return(NULL)
+    }
     req(input$tax_rank_regression, input$selected_taxon, input$env_var, input$point_size, input$text_size)
 
     # Prepare dataset and env object
@@ -82,8 +93,10 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
     env_obj <- trans_env$new(dataset = dataset, env_cols = input$env_var)
 
     # Safety: ensure selected env var is numeric
-    validate(need(is.numeric(dataset$sample_table[[input$env_var]]),
-                  "Selected environmental variable must be numeric."))
+    validate(need(
+      is.numeric(dataset$sample_table[[input$env_var]]),
+      "Selected environmental variable must be numeric."
+    ))
 
     # Get abundance vector for selected taxon
     rank_table <- dataset$taxa_abund[[input$tax_rank_regression]]
@@ -112,13 +125,13 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
       x_axis_title = last_taxon,
       y_axis_title = input$env_var
     ) + theme_classic() +
-    theme(
-      axis.text = element_text(size = input$text_size),
-      axis.title = element_text(size = input$text_size),
-      legend.text = element_text(size = input$text_size),
-      legend.title = element_text(size = input$text_size),
-      text = element_text(size = input$text_size)  # This should cover annotations like equations
-    )
+      theme(
+        axis.text = element_text(size = input$text_size),
+        axis.title = element_text(size = input$text_size),
+        legend.text = element_text(size = input$text_size),
+        legend.title = element_text(size = input$text_size),
+        text = element_text(size = input$text_size) # This should cover annotations like equations
+      )
 
     print(p)
   })
@@ -131,4 +144,48 @@ regression_server <- function(input, output, session, final_physeq, analysis_rea
 
   # Suspend plot rendering when hidden (only render when tab is active)
   outputOptions(output, "regression_plot", suspendWhenHidden = TRUE)
+
+  # Download regression plot as PDF
+  output$download_regression_plot <- downloadHandler(
+    filename = function() paste0("regression_", Sys.Date(), ".pdf"),
+    content = function(file) {
+      tryCatch(
+        {
+          pdf(file, width = 10, height = 8)
+          # Re-render the plot into PDF device
+          req(final_physeq(), input$env_var, input$selected_taxon, input$tax_rank_regression)
+          dataset <- suppressMessages(file2meco::phyloseq2meco(final_physeq()))
+          env_obj <- trans_env$new(dataset = dataset, env_cols = input$env_var)
+          rank_table <- dataset$taxa_abund[[input$tax_rank_regression]]
+          lineage_vector <- as.numeric(rank_table[input$selected_taxon, ])
+          group_val <- if (input$group == "None") NULL else input$group
+          taxon_parts <- unlist(strsplit(input$selected_taxon, "|", fixed = TRUE))
+          last_taxon <- sub("^[a-zA-Z]__", "", tail(taxon_parts, 1))
+          p <- env_obj$plot_scatterfit(
+            x = lineage_vector, y = input$env_var,
+            point_size = input$point_size,
+            point_alpha = 0.8, line_se = TRUE,
+            shape = group_val, group = group_val,
+            line_se_color = "#A87CA0",
+            label.x.npc = "left", label.y.npc = "top",
+            x_axis_title = last_taxon,
+            y_axis_title = input$env_var
+          ) + theme_classic() +
+            theme(
+              axis.text = element_text(size = input$text_size),
+              axis.title = element_text(size = input$text_size),
+              legend.text = element_text(size = input$text_size),
+              legend.title = element_text(size = input$text_size),
+              text = element_text(size = input$text_size)
+            )
+          print(p)
+          dev.off()
+        },
+        error = function(e) {
+          try(dev.off(), silent = TRUE)
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

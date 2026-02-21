@@ -1,13 +1,13 @@
 alpha_diversity_server <- function(input, output, session, final_physeq, analysis_ready) {
-
   # Group selector
   output$alpha_group_selector <- renderUI({
     req(final_physeq())
     df <- as.data.frame(sample_data(final_physeq()))
     categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
     selectInput("alpha_group", "Group by:",
-                choices = c("None", categorical_cols),
-                selected = "None")
+      choices = c("None", categorical_cols),
+      selected = "None"
+    )
   })
 
   # Order selector
@@ -17,13 +17,15 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
       df <- as.data.frame(sample_data(final_physeq()))
       choices <- unique(df[[input$alpha_group]])
       selectizeInput("alpha_order", "Custom Order (drag to reorder):",
-                     choices = choices, selected = choices, multiple = TRUE,
-                     options = list(plugins = list('drag_drop')))
+        choices = choices, selected = choices, multiple = TRUE,
+        options = list(plugins = list("drag_drop"))
+      )
     } else {
       choices <- sample_names(final_physeq())
       selectizeInput("alpha_order", "Custom Sample Order (drag to reorder):",
-                     choices = choices, selected = choices, multiple = TRUE,
-                     options = list(plugins = list('drag_drop')))
+        choices = choices, selected = choices, multiple = TRUE,
+        options = list(plugins = list("drag_drop"))
+      )
     }
   })
 
@@ -32,8 +34,10 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
     req(final_physeq())
     df <- as.data.frame(sample_data(final_physeq()))
     categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
-    selectInput("alpha_colour", "Colour", choices = c("None", categorical_cols),
-                selected = "None")
+    selectInput("alpha_colour", "Colour",
+      choices = c("None", categorical_cols),
+      selected = "None"
+    )
   })
 
   # Alpha diversity plot output wrapper
@@ -53,63 +57,173 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
 
     validate(need(length(input$alpha_index) > 0, "Please select at least one diversity index."))
 
-    tryCatch({
-    scale_type <- if (isTRUE(input$flip_alpha)) "free_x" else "free"
+    tryCatch(
+      {
+        scale_type <- if (isTRUE(input$flip_alpha)) "free_x" else "free"
 
-      # Base plot
-      if (!is.null(input$alpha_group) && input$alpha_group != "None") {
-        p <- plot_richness(
-          final_physeq(),
-          x = input$alpha_group,
-          measures = input$alpha_index,
-          scales = scale_type
-        ) + geom_point(size = 5, alpha = 0.7) + theme_minimal() + theme(plot.margin = margin(0,0,0,0))
-      } else {
-        p <- plot_richness(
-          final_physeq(),
-          measures = input$alpha_index,
-          scales = scale_type
-        ) + geom_point(size = 5, alpha = 0.7) + theme_minimal() + theme(plot.margin = margin(0,0,0,0))
-      }
-
-      # Apply color only if valid
-      if (!is.null(input$alpha_colour) && input$alpha_colour != "None") {
-        p <- p + aes_string(color = input$alpha_colour)
-      }
-
-      # Reorder if custom order given
-      if (!is.null(input$alpha_order) && length(input$alpha_order) > 0) {
-        if (!is.null(input$alpha_group) && input$alpha_group != "None" && input$alpha_group %in% colnames(p$data)) {
-          p$data[[input$alpha_group]] <- factor(p$data[[input$alpha_group]], levels = input$alpha_order)
-        } else if ("samples" %in% colnames(p$data)) {
-          p$data$samples <- factor(p$data$samples, levels = input$alpha_order)
+        # Base plot
+        if (!is.null(input$alpha_group) && input$alpha_group != "None") {
+          p <- plot_richness(
+            final_physeq(),
+            x = input$alpha_group,
+            measures = input$alpha_index,
+            scales = scale_type
+          ) + geom_point(size = 5, alpha = 0.7) + theme_minimal() + theme(plot.margin = margin(0, 0, 0, 0))
+        } else {
+          p <- plot_richness(
+            final_physeq(),
+            measures = input$alpha_index,
+            scales = scale_type
+          ) + geom_point(size = 5, alpha = 0.7) + theme_minimal() + theme(plot.margin = margin(0, 0, 0, 0))
         }
-      }
 
-      if (isTRUE(input$flip_alpha)) {
-        p <- p + coord_flip()
-      }
+        # Apply color only if valid
+        if (!is.null(input$alpha_colour) && input$alpha_colour != "None") {
+          p <- p + aes_string(color = input$alpha_colour)
+        }
 
-      p +
-        theme(
-          axis.text = element_text(size = input$alpha_beta_label_size),
-          axis.title = element_text(size = input$alpha_beta_label_size),
-          legend.text = element_text(size = input$alpha_beta_label_size),
-          legend.title = element_text(size = input$alpha_beta_label_size),
-          strip.text = element_text(size = input$alpha_beta_label_size)
+        # Reorder if custom order given
+        if (!is.null(input$alpha_order) && length(input$alpha_order) > 0) {
+          if (!is.null(input$alpha_group) && input$alpha_group != "None" && input$alpha_group %in% colnames(p$data)) {
+            p$data[[input$alpha_group]] <- factor(p$data[[input$alpha_group]], levels = input$alpha_order)
+          } else if ("samples" %in% colnames(p$data)) {
+            p$data$samples <- factor(p$data$samples, levels = input$alpha_order)
+          }
+        }
+
+        if (isTRUE(input$flip_alpha)) {
+          p <- p + coord_flip()
+        }
+
+        p +
+          theme(
+            axis.text = element_text(size = input$alpha_beta_label_size),
+            axis.title = element_text(size = input$alpha_beta_label_size),
+            legend.text = element_text(size = input$alpha_beta_label_size),
+            legend.title = element_text(size = input$alpha_beta_label_size),
+            strip.text = element_text(size = input$alpha_beta_label_size)
+          )
+
+        p +
+          theme(
+            axis.text = element_text(size = input$alpha_beta_label_size),
+            axis.title = element_text(size = input$alpha_beta_label_size),
+            legend.text = element_text(size = input$alpha_beta_label_size),
+            legend.title = element_text(size = input$alpha_beta_label_size),
+            strip.text = element_text(size = input$alpha_beta_label_size)
+          )
+      },
+      error = function(e) {
+        plot.new()
+        text(0.5, 0.5, paste("Error:", e$message), cex = 1.5)
+      }
+    )
+  })
+
+  # Kruskal-Wallis statistical test for alpha diversity
+  output$alpha_stats <- renderUI({
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return(NULL)
+    }
+    req(input$alpha_index)
+    if (is.null(input$alpha_group) || input$alpha_group == "None") {
+      return(NULL)
+    }
+
+    tryCatch(
+      {
+        ps <- final_physeq()
+        rich <- estimate_richness(ps, measures = input$alpha_index)
+        meta <- as.data.frame(sample_data(ps))
+        group_var <- meta[[input$alpha_group]]
+
+        if (length(unique(group_var)) < 2) {
+          return(NULL)
+        }
+
+        results <- lapply(input$alpha_index, function(idx) {
+          if (!idx %in% colnames(rich)) {
+            return(NULL)
+          }
+          test <- kruskal.test(rich[[idx]] ~ factor(group_var))
+          sig <- if (test$p.value <= 0.001) "***" else if (test$p.value <= 0.01) "**" else if (test$p.value <= 0.05) "*" else ""
+          sprintf(
+            "%s: \u03C7\u00B2 = %.2f, df = %d, p = %.4f %s",
+            idx, test$statistic, test$parameter, test$p.value, sig
+          )
+        })
+
+        results <- Filter(Negate(is.null), results)
+        if (length(results) == 0) {
+          return(NULL)
+        }
+
+        div(
+          class = "ui info message",
+          div(class = "header", "Kruskal-Wallis Test"),
+          tags$small("Non-parametric test for differences between groups"),
+          tags$ul(lapply(results, function(r) tags$li(r)))
         )
-    }, error = function(e) {
-      plot.new()
-      text(0.5, 0.5, paste("Error:", e$message), cex = 1.5)
-    })
+      },
+      error = function(e) NULL
+    )
   })
 
   # Ensure UI elements render even when tab is hidden
   outputOptions(output, "alpha_group_selector", suspendWhenHidden = FALSE)
   outputOptions(output, "alpha_order_selector", suspendWhenHidden = FALSE)
   outputOptions(output, "alpha_colour_selector", suspendWhenHidden = FALSE)
+  outputOptions(output, "alpha_stats", suspendWhenHidden = FALSE)
 
   # Allow plot rendering even when tab is hidden (to ensure it renders when tab becomes active)
   outputOptions(output, "alphaPlot", suspendWhenHidden = FALSE)
   outputOptions(output, "alpha_plot_output", suspendWhenHidden = FALSE)
+
+  # Download alpha diversity plot as PDF
+  output$download_alpha_plot <- downloadHandler(
+    filename = function() paste0("alpha_diversity_", Sys.Date(), ".pdf"),
+    content = function(file) {
+      tryCatch(
+        {
+          req(final_physeq(), input$alpha_index)
+          scale_type <- if (isTRUE(input$flip_alpha)) "free_x" else "free"
+          if (!is.null(input$alpha_group) && input$alpha_group != "None") {
+            p <- plot_richness(final_physeq(),
+              x = input$alpha_group,
+              measures = input$alpha_index, scales = scale_type
+            )
+          } else {
+            p <- plot_richness(final_physeq(), measures = input$alpha_index, scales = scale_type)
+          }
+          p <- p + geom_point(size = 5, alpha = 0.7) + theme_minimal()
+          if (!is.null(input$alpha_colour) && input$alpha_colour != "None") {
+            p <- p + aes_string(color = input$alpha_colour)
+          }
+          if (isTRUE(input$flip_alpha)) p <- p + coord_flip()
+          ggplot2::ggsave(file, plot = p, width = 12, height = 8, device = "pdf")
+        },
+        error = function(e) {
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
+
+  # Download alpha diversity table as CSV
+  output$download_alpha_table <- downloadHandler(
+    filename = function() paste0("alpha_diversity_table_", Sys.Date(), ".csv"),
+    content = function(file) {
+      tryCatch(
+        {
+          req(final_physeq(), input$alpha_index)
+          rich <- estimate_richness(final_physeq(), measures = input$alpha_index)
+          rich$SampleID <- rownames(rich)
+          utils::write.csv(rich, file, row.names = FALSE)
+        },
+        error = function(e) {
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

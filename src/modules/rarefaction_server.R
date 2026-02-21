@@ -2,7 +2,6 @@
 # Handles rarefaction curve plots
 
 rarefaction_server <- function(input, output, session, final_physeq, analysis_ready) {
-
   # Color selector
   output$rarefaction_color_selector <- renderUI({
     req(final_physeq())
@@ -26,8 +25,9 @@ rarefaction_server <- function(input, output, session, final_physeq, analysis_re
       df <- as.data.frame(sample_data(final_physeq()))
       choices <- unique(df[[input$rare_facet]])
       selectizeInput("rarefaction_facet_order", "Custom Facet Order (drag to reorder):",
-                     choices = choices, selected = choices, multiple = TRUE,
-                     options = list(plugins = list('drag_drop')))
+        choices = choices, selected = choices, multiple = TRUE,
+        options = list(plugins = list("drag_drop"))
+      )
     } else {
       return(NULL)
     }
@@ -108,4 +108,31 @@ rarefaction_server <- function(input, output, session, final_physeq, analysis_re
 
   # Suspend plot rendering when hidden (only render when tab is active)
   outputOptions(output, "rarefactionPlot", suspendWhenHidden = TRUE)
+
+  # Download rarefaction plot as PDF
+  output$download_rarefaction_plot <- downloadHandler(
+    filename = function() paste0("rarefaction_curves_", Sys.Date(), ".pdf"),
+    content = function(file) {
+      tryCatch(
+        {
+          req(base_rarefaction_plot(), input$rare_color)
+          p <- base_rarefaction_plot()
+          p <- p + aes(color = !!sym(input$rare_color))
+          if (!is.null(input$rare_facet) && input$rare_facet != "None") {
+            p <- p + facet_wrap(as.formula(paste("~", input$rare_facet)), scales = "free")
+          }
+          p <- p + theme(
+            axis.text = element_text(size = input$rarefaction_beta_label_size),
+            axis.title = element_text(size = input$rarefaction_beta_label_size),
+            strip.text = element_text(size = input$rarefaction_beta_label_size),
+            legend.position = "none"
+          )
+          ggplot2::ggsave(file, plot = p, width = 10, height = 8, device = "pdf")
+        },
+        error = function(e) {
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

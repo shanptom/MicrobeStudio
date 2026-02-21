@@ -1,19 +1,22 @@
 # Metadata Analysis Module Server
 # Handles RDA, correlation analysis, and Mantel tests
 
-metadata_server <- function(input, output, session, final_physeq, reactiveValues_envfit, selected_analysis, analysis_ready) {
-
+metadata_server <- function(input, output, session, final_physeq, reactiveValues_envfit, selected_analysis, analysis_ready, telemetry = NULL) {
   # Numeric column selector
   output$numeric_column_selector_ui <- renderUI({
     req(final_physeq())
     df <- as.data.frame(sample_data(final_physeq()))
     numeric_cols <- names(df)[sapply(df, is.numeric)]
     selectInput("numeric_cols", "Select numeric metadata columns:",
-                choices = numeric_cols, multiple = TRUE)
+      choices = numeric_cols, multiple = TRUE
+    )
   })
 
   # Create trans_env object
   observeEvent(input$create_transenv, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "metadata_create_transenv")
+    }
     req(final_physeq(), input$numeric_cols)
 
     dataset <- phyloseq2meco(final_physeq())
@@ -46,7 +49,8 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
 
     tagList(
       h4("Select Analysis"),
-      div(class = "ui buttons fluid",
+      div(
+        class = "ui buttons fluid",
         actionButton("run_rda", "RDA", class = "ui primary button"),
         actionButton("run_corr", "Correlation", class = "ui button"),
         actionButton("run_mantel", "Mantel", class = "ui orange button")
@@ -55,24 +59,32 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
       # RDA controls
       conditionalPanel(
         condition = "output.analysis_mode == 'rda'",
-        div(class = "ui segment",
-          div(class = "ui form",
-            div(class = "field",
+        div(
+          class = "ui segment",
+          div(
+            class = "ui form",
+            div(
+              class = "field",
               checkboxInput("adjust_arrow_length", "Adjust Arrow Length", TRUE)
             ),
-            div(class = "field",
+            div(
+              class = "field",
               sliderInput("max_perc_env", "Max Percentage of Explained Env Fit (arrows)", min = 0.05, max = 1, value = 0.3, step = 0.05)
             ),
-            div(class = "field",
+            div(
+              class = "field",
               selectInput("rda_color", "Color by:", choices = factor_vars, selected = factor_vars[1] %||% "None")
             ),
-            div(class = "field",
+            div(
+              class = "field",
               selectInput("rda_shape", "Point Shape", choices = factor_vars, selected = factor_vars[1] %||% "None")
             ),
-            div(class = "field",
+            div(
+              class = "field",
               selectInput("rda_label", "Sample Labels:", choices = c("None", names(sample_meta)), selected = "None")
             ),
-            div(class = "field",
+            div(
+              class = "field",
               sliderInput("rda_textsize", "Text Size", value = 6, min = 6, max = 15, step = 1)
             )
           )
@@ -82,25 +94,33 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
       # Correlation controls
       conditionalPanel(
         condition = "output.analysis_mode == 'corr'",
-        div(class = "ui segment",
-          div(class = "ui form",
-            div(class = "field",
+        div(
+          class = "ui segment",
+          div(
+            class = "ui form",
+            div(
+              class = "field",
               selectInput("input_method", "Correlation Method", choices = c("pearson", "spearman", "kendall"), selected = "spearman")
             ),
-            div(class = "field",
+            div(
+              class = "field",
               numericInput("input_threshold", "Abundance Threshold", value = 0.001, min = 0.00001, max = 0.9, step = 0.001)
             ),
-            div(class = "field",
+            div(
+              class = "field",
               selectInput("p_type", "P-value Adjustment Type", choices = c("All", "Taxa", "Env"), selected = "All")
             ),
-            div(class = "field",
+            div(
+              class = "field",
               selectInput("group_by", "Group By", choices = c("None", names(sample_meta)), selected = "None")
             ),
-            div(class = "field",
+            div(
+              class = "field",
               sliderInput("corr_text_size", "Text Size", value = 10, min = 7, max = 20, step = 2)
             ),
-            div(class = "field",
-              sliderInput("xtextangle", "Text angle",  value = 0, min = 0, max = 90, step = 10)
+            div(
+              class = "field",
+              sliderInput("xtextangle", "Text angle", value = 0, min = 0, max = 90, step = 10)
             )
           )
         )
@@ -109,9 +129,12 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
       # Mantel controls
       conditionalPanel(
         condition = "output.analysis_mode == 'mantel'",
-        div(class = "ui segment",
-          div(class = "ui form",
-            div(class = "field",
+        div(
+          class = "ui segment",
+          div(
+            class = "ui form",
+            div(
+              class = "field",
               selectInput("mantel_group", "Group By:", choices = factor_vars, selected = factor_vars[1] %||% "None")
             ),
             actionButton("run_mantel_analysis", "Run Mantel Test", class = "ui primary button fluid")
@@ -123,10 +146,16 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
 
   # Analysis button observers
   observeEvent(input$run_rda, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "metadata_run_rda")
+    }
     selected_analysis("rda")
   })
 
   observeEvent(input$run_corr, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "metadata_run_correlation")
+    }
     selected_analysis("corr")
   })
 
@@ -143,7 +172,6 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
   # Ensure UI elements render even when tab is hidden
   outputOptions(output, "numeric_column_selector_ui", suspendWhenHidden = FALSE)
   outputOptions(output, "visualization_sidebar", suspendWhenHidden = FALSE)
-
 
 
   # RDA plot
@@ -203,6 +231,9 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
 
   # Mantel test
   observeEvent(input$run_mantel_analysis, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "metadata_run_mantel")
+    }
     req(final_physeq(), input$numeric_cols)
 
     dataset <- phyloseq2meco(final_physeq())
@@ -254,14 +285,16 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
       req(mantel_objs[[1]], analysis_ready())
 
       MantCorr.Sn <- quickcor(mantel_objs[[1]]$data_env, type = "upper", cor.test = TRUE, show.diag = TRUE) +
-        geom_square() +scale_fill_distiller(palette = "RdBu", direction = 1)+
-        #geom_mark(sig.thres = 0.05, color = "black", size = 0) +
+        geom_tile() + scale_fill_distiller(palette = "RdBu", direction = 1) +
+        # geom_mark(sig.thres = 0.05, color = "black", size = 0) +
         anno_link(aes(colour = pd, size = rd), data = combined_table) +
         scale_size_manual(values = c(0.5, 1.5, 3)) +
         scale_colour_manual(values = c("#D95F02", "#1B9E77", "#A2A2A288")) +
-        guides(size = guide_legend(title = "Mantel's r", override.aes = list(colour = "grey35"), order = 2),
-               colour = guide_legend(title = "Mantel's p", override.aes = list(size = 3), order = 1),
-               fill = guide_colorbar(title = "Pearson's r", order = 3))+
+        guides(
+          size = guide_legend(title = "Mantel's r", override.aes = list(colour = "grey35"), order = 2),
+          colour = guide_legend(title = "Mantel's p", override.aes = list(size = 3), order = 1),
+          fill = guide_colorbar(title = "Pearson's r", order = 3)
+        ) +
         theme(
           axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
           axis.text.y = element_text(size = 12),
@@ -277,4 +310,51 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
   # Suspend plot rendering when hidden (only render when tab is active)
   outputOptions(output, "rda_plot", suspendWhenHidden = TRUE)
   outputOptions(output, "corr_plot", suspendWhenHidden = TRUE)
+
+  # Download metadata analysis plot as PDF
+  output$download_metadata_plot <- downloadHandler(
+    filename = function() {
+      mode <- tryCatch(selected_analysis(), error = function(e) "metadata")
+      paste0("metadata_", mode, "_", Sys.Date(), ".pdf")
+    },
+    content = function(file) {
+      tryCatch(
+        {
+          mode <- selected_analysis()
+          req(mode)
+          pdf(file, width = 10, height = 8)
+
+          if (mode == "rda") {
+            req(reactiveValues_envfit$transenv)
+            e1 <- reactiveValues_envfit$transenv
+            e1$cal_ordination(method = "RDA", feature_sel = FALSE)
+            e1$trans_ordination(
+              adjust_arrow_length = input$adjust_arrow_length,
+              max_perc_env = input$max_perc_env
+            )
+            label_input <- if (input$rda_label == "None") NULL else input$rda_label
+            shape_input <- if (input$rda_shape == "None") NULL else input$rda_shape
+            e1$plot_ordination(
+              plot_color = input$rda_color,
+              plot_shape = shape_input,
+              env_text_size = input$rda_textsize,
+              taxa_text_size = input$rda_textsize,
+              add_sample_label = label_input,
+              point_size = input$rda_textsize
+            )
+          } else {
+            # For corr and mantel, notify user to use the browser's print/save function
+            plot.new()
+            text(0.5, 0.5, paste("Please use your browser's\nright-click > Save Image\nfor", mode, "plots"), cex = 1.5)
+          }
+
+          dev.off()
+        },
+        error = function(e) {
+          try(dev.off(), silent = TRUE)
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

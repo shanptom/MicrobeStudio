@@ -1,8 +1,7 @@
 # Filter Module Server
 # Handles taxonomic filtering, rarefaction, and TSS normalization
 
-filter_server <- function(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready) {
-
+filter_server <- function(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry = NULL) {
   # Taxa filter UI - based on raw uploaded data
   output$taxa_filters <- renderUI({
     req(raw_physeq())
@@ -16,9 +15,10 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
 
     tagList(
       lapply(ranks, function(rank) {
-        div(class = "field",
-            tags$label(paste("Exclude", rank, "(comma-separated):")),
-            textInput(paste0("filter_", rank), NULL, "", width = "100%")
+        div(
+          class = "field",
+          tags$label(paste("Exclude", rank, "(comma-separated):")),
+          textInput(paste0("filter_", rank), NULL, "", width = "100%")
         )
       })
     )
@@ -29,6 +29,9 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
 
   # Apply filter button - filters raw data and updates raw_physeq
   observeEvent(input$apply_filter, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "filter_apply")
+    }
     req(raw_physeq())
     ps <- raw_physeq()
     taxdf <- as.data.frame(tax_table(ps))
@@ -72,9 +75,9 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
     # Apply normalization if selected
     if (input$doRarefy) {
       ps <- rarefy_even_depth(ps,
-                              sample.size = min(sample_sums(ps)),
-                              rngseed = 123, replace = TRUE,
-                              trimOTUs = TRUE, verbose = FALSE
+        sample.size = min(sample_sums(ps)),
+        rngseed = 123, replace = TRUE,
+        trimOTUs = TRUE, verbose = FALSE
       )
       showNotification("Rarefaction applied.", type = "message")
     } else if (input$doTSS) {
@@ -86,15 +89,17 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
     final_physeq(ps)
 
     # Enable all analysis tabs now that data is finalized
-    analysis_tabs <- c("rarefaction", "abundance", "alpha", "dendrogram",
-                       "ordination", "metadata", "regression", "indicator")
-    for(tab in analysis_tabs) {
-      session$sendCustomMessage('enableTab', tab)
+    analysis_tabs <- c(
+      "rarefaction", "abundance", "alpha", "dendrogram",
+      "ordination", "metadata", "regression", "indicator"
+    )
+    for (tab in analysis_tabs) {
+      session$sendCustomMessage("enableTab", tab)
     }
 
     # Set analysis ready flag and switch to rarefaction tab
     analysis_ready(TRUE)
-    session$sendCustomMessage('showTab', 'rarefaction')
+    session$sendCustomMessage("showTab", "rarefaction")
   })
 
   # Prevent both normalization methods from being selected
@@ -110,10 +115,70 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
     }
   })
 
-  # Filter status display - shows raw data stats
-  output$filter_status <- renderPrint({
+  # Filter status display - rich data summary
+  output$filter_status <- renderUI({
     req(raw_physeq())
-    cat("Current number of ASVs:", ntaxa(raw_physeq()), "\n")
-    cat("Number of samples:", nsamples(raw_physeq()))
+    ps <- raw_physeq()
+    df <- as.data.frame(sample_data(ps))
+    lib_sizes <- sample_sums(ps)
+    cat_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
+    num_cols <- names(df)[sapply(df, is.numeric)]
+    tax_ranks <- colnames(tax_table(ps))
+
+    div(
+      class = "ui mini statistics",
+      style = "flex-wrap: wrap;",
+      div(
+        class = "statistic",
+        div(class = "value", nsamples(ps)),
+        div(class = "label", "Samples")
+      ),
+      div(
+        class = "statistic",
+        div(class = "value", ntaxa(ps)),
+        div(class = "label", "ASVs / OTUs")
+      ),
+      div(
+        class = "statistic",
+        div(class = "value", length(tax_ranks)),
+        div(class = "label", paste("Ranks (", paste(tax_ranks[c(1, length(tax_ranks))], collapse = " \u2192 "), ")"))
+      ),
+      div(
+        class = "statistic",
+        div(class = "value", length(cat_cols)),
+        div(class = "label", "Grouping Vars")
+      ),
+      div(
+        class = "statistic",
+        div(class = "value", length(num_cols)),
+        div(class = "label", "Numeric Vars")
+      ),
+      div(
+        class = "ui mini message", style = "width: 100%; margin-top: 0.5rem;",
+        tags$strong("Library sizes: "),
+        sprintf(
+          "min = %s, median = %s, max = %s",
+          format(min(lib_sizes), big.mark = ","),
+          format(median(lib_sizes), big.mark = ","),
+          format(max(lib_sizes), big.mark = ",")
+        )
+      )
+    )
   })
+
+  # Download filtered phyloseq as .rds
+  output$download_phyloseq <- downloadHandler(
+    filename = function() paste0("filtered_phyloseq_", Sys.Date(), ".rds"),
+    content = function(file) {
+      tryCatch(
+        {
+          req(raw_physeq())
+          saveRDS(raw_physeq(), file)
+        },
+        error = function(e) {
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

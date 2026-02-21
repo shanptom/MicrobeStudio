@@ -2,7 +2,6 @@
 # Handles hierarchical clustering and dendrogram visualization
 
 dendrogram_server <- function(input, output, session, final_physeq, analysis_ready) {
-
   # Custom dendrogram function with adjustable label size
   dendrogram_phyloseq_custom <- function(phyloseq_obj, treatment = NULL, method = "bray",
                                          colors = "default", label_size = 2.5) {
@@ -50,13 +49,16 @@ dendrogram_server <- function(input, output, session, final_physeq, analysis_rea
     df <- as.data.frame(sample_data(final_physeq()))
     categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
     selectInput("dend_treatment", "Select metadata column for grouping:",
-                choices = categorical_cols,
-                selected = categorical_cols[1] %||% "None")
+      choices = categorical_cols,
+      selected = categorical_cols[1] %||% "None"
+    )
   })
 
   # Dendrogram plot
   output$dendrogramPlot <- renderPlot({
-    if (!analysis_ready() || is.null(final_physeq())) return(NULL)
+    if (!analysis_ready() || is.null(final_physeq())) {
+      return(NULL)
+    }
     req(input$dend_method, input$dend_treatment, input$dend_label_size, input$dend_text_size)
 
     dend <- dendrogram_phyloseq_custom(
@@ -73,6 +75,7 @@ dendrogram_server <- function(input, output, session, final_physeq, analysis_rea
       legend.title = element_text(size = input$dend_text_size)
     )
 
+
     dend
   })
 
@@ -81,4 +84,32 @@ dendrogram_server <- function(input, output, session, final_physeq, analysis_rea
 
   # Suspend plot rendering when hidden (only render when tab is active)
   outputOptions(output, "dendrogramPlot", suspendWhenHidden = TRUE)
+
+  # Download dendrogram plot as PDF
+  output$download_dendrogram_plot <- downloadHandler(
+    filename = function() paste0("dendrogram_", input$dend_method, "_", Sys.Date(), ".pdf"),
+    content = function(file) {
+      tryCatch(
+        {
+          req(final_physeq(), input$dend_method, input$dend_treatment, input$dend_label_size, input$dend_text_size)
+          dend <- dendrogram_phyloseq_custom(
+            phyloseq_obj = final_physeq(),
+            treatment = input$dend_treatment,
+            method = input$dend_method,
+            label_size = input$dend_label_size
+          )
+          dend <- dend + theme(
+            axis.text = element_text(size = input$dend_text_size),
+            axis.title = element_text(size = input$dend_text_size),
+            legend.text = element_text(size = input$dend_text_size),
+            legend.title = element_text(size = input$dend_text_size)
+          )
+          ggplot2::ggsave(file, plot = dend, width = 10, height = 8, device = "pdf")
+        },
+        error = function(e) {
+          showNotification(paste("Download failed:", e$message), type = "error")
+        }
+      )
+    }
+  )
 }

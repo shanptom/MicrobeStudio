@@ -1,7 +1,7 @@
 # Data Upload Module Server
 # Handles file uploads, demo data loading, and phyloseq object creation
 
-data_upload_server <- function(input, output, session, raw_physeq, ordering_rules, analysis_tabs, analysis_ready) {
+data_upload_server <- function(input, output, session, raw_physeq, ordering_rules, analysis_tabs, analysis_ready, telemetry = NULL) {
   # Ensure Upload button starts disabled; enable once files are ready
   shinyjs::disable("process_files")
 
@@ -10,9 +10,10 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
   # Enable/disable Upload button based on file readiness and processing state
   observe({
     ready <- (!is.null(input$phylo) && !is.null(input$phylo$datapath) && nzchar(input$phylo$datapath)) ||
+      (!is.null(input$biom) && !is.null(input$biom$datapath) && nzchar(input$biom$datapath)) ||
       (!is.null(input$asv) && !is.null(input$tax) && !is.null(input$meta) &&
-       !is.null(input$asv$datapath) && !is.null(input$tax$datapath) && !is.null(input$meta$datapath) &&
-       nzchar(input$asv$datapath) && nzchar(input$tax$datapath) && nzchar(input$meta$datapath))
+        !is.null(input$asv$datapath) && !is.null(input$tax$datapath) && !is.null(input$meta$datapath) &&
+        nzchar(input$asv$datapath) && nzchar(input$tax$datapath) && nzchar(input$meta$datapath))
 
     if (isTRUE(processing())) {
       shinyjs::disable("process_files")
@@ -24,26 +25,40 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
   })
 
   # Observer for demo button on upload tab
-  observeEvent(input$load_demo, {
-    req(input$demo_file)
-    load_demo_data(input$demo_file)
-  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+  observeEvent(input$load_demo,
+    {
+      req(input$demo_file)
+      load_demo_data(input$demo_file)
+    },
+    ignoreNULL = TRUE,
+    ignoreInit = TRUE
+  )
 
   # Observer for demo button on home page
-  observeEvent(input$load_demo_from_home, {
-    # Home page button defaults to RDS
-    load_demo_data("rds")
-  }, ignoreNULL = TRUE, ignoreInit = TRUE)
-  
+  observeEvent(input$load_demo_from_home,
+    {
+      # Home page button defaults to RDS
+      load_demo_data("rds")
+    },
+    ignoreNULL = TRUE,
+    ignoreInit = TRUE
+  )
+
   # Observer for processing uploaded files
   observeEvent(input$process_files, {
+    if (!is.null(telemetry)) {
+      log_tool_usage(telemetry, session, "upload_process_files")
+    }
     processing(TRUE)
     shinyjs::disable("process_files")
     shinyjs::show("upload_spinner")
-    on.exit({
-      processing(FALSE)
-      shinyjs::hide("upload_spinner")
-    }, add = TRUE)
+    on.exit(
+      {
+        processing(FALSE)
+        shinyjs::hide("upload_spinner")
+      },
+      add = TRUE
+    )
     process_uploaded_files()
   })
 
@@ -51,39 +66,43 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
   load_demo_data <- function(type) {
     demo_path <- "data/"
     phy_obj <- NULL
-    
-    tryCatch({
-      if (type == "rds") {
-        phy_obj <- readRDS(file.path(demo_path, "demo_ps.rds"))
-        showNotification("Demo Phyloseq RDS loaded!", type = "message", duration = 5)
-      } else { # csv
-        otu <- read.csv(file.path(demo_path, "demo_asv.csv"), row.names = 1)
-        tax <- as.matrix(read.csv(file.path(demo_path, "demo_tax.csv"), row.names = 1))
-        meta <- read.csv(file.path(demo_path, "demo_meta.csv"), row.names = 1)
-        phy_obj <- phyloseq(
-          otu_table(as.matrix(otu), taxa_are_rows = TRUE),
-          tax_table(tax),
-          sample_data(meta)
-        )
-        showNotification("Demo CSV files loaded!", type = "message", duration = 5)
+
+    tryCatch(
+      {
+        if (type == "rds") {
+          phy_obj <- readRDS(file.path(demo_path, "demo_ps.rds"))
+          showNotification("Demo Phyloseq RDS loaded!", type = "message", duration = 5)
+        } else { # csv
+          otu <- read.csv(file.path(demo_path, "demo_asv.csv"), row.names = 1)
+          tax <- as.matrix(read.csv(file.path(demo_path, "demo_tax.csv"), row.names = 1))
+          meta <- read.csv(file.path(demo_path, "demo_meta.csv"), row.names = 1)
+          phy_obj <- phyloseq(
+            otu_table(as.matrix(otu), taxa_are_rows = TRUE),
+            tax_table(tax),
+            sample_data(meta)
+          )
+          showNotification("Demo CSV files loaded!", type = "message", duration = 5)
+        }
+
+        # Common post-load logic
+        post_data_load(phy_obj)
+      },
+      error = function(e) {
+        showNotification(paste("Error loading demo data:", e$message), type = "error", duration = 10)
       }
-      
-      # Common post-load logic
-      post_data_load(phy_obj)
-      
-    }, error = function(e) {
-      showNotification(paste("Error loading demo data:", e$message), type = "error", duration = 10)
-    })
+    )
   }
 
   # Function to process user-uploaded files
   process_uploaded_files <- function() {
     phy_obj <- NULL
-    
+
     # Helper: wait for files to exist (handles async upload race)
     wait_for_files <- function(paths, timeout_ms = 5000L) {
       paths <- paths[!is.null(paths) & !is.na(paths) & nzchar(paths)]
-      if (length(paths) == 0) return(FALSE)
+      if (length(paths) == 0) {
+        return(FALSE)
+      }
       start <- Sys.time()
       while (any(!file.exists(paths))) {
         if (as.numeric(difftime(Sys.time(), start, units = "secs")) * 1000 > timeout_ms) {
@@ -93,41 +112,97 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
       }
       TRUE
     }
-    
-    tryCatch({
-      # Prefer RDS if provided
-      if (!is.null(input$phylo) && !is.null(input$phylo$datapath)) {
-        if (!wait_for_files(input$phylo$datapath)) {
-          showNotification("File is still uploading. Please wait a moment and try again.", type = "warning", duration = 6)
+
+    tryCatch(
+      {
+        # Prefer RDS if provided
+        if (!is.null(input$phylo) && !is.null(input$phylo$datapath)) {
+          if (!wait_for_files(input$phylo$datapath)) {
+            showNotification("File is still uploading. Please wait a moment and try again.", type = "warning", duration = 6)
+            return()
+          }
+          phy_obj <- readRDS(input$phylo$datapath)
+          # Validate phyloseq object
+          if (!inherits(phy_obj, "phyloseq")) {
+            showNotification("The uploaded .rds file is not a valid phyloseq object.", type = "error", duration = 10)
+            return()
+          }
+          if (is.null(otu_table(phy_obj))) {
+            showNotification("The phyloseq object is missing an OTU/ASV table.", type = "error", duration = 10)
+            return()
+          }
+          if (is.null(sample_data(phy_obj))) {
+            showNotification("The phyloseq object is missing sample metadata.", type = "error", duration = 10)
+            return()
+          }
+
+          # BIOM file support
+        } else if (!is.null(input$biom) && !is.null(input$biom$datapath)) {
+          if (!wait_for_files(input$biom$datapath)) {
+            showNotification("File is still uploading. Please wait a moment and try again.", type = "warning", duration = 6)
+            return()
+          }
+          phy_obj <- tryCatch(
+            {
+              phyloseq::import_biom(input$biom$datapath)
+            },
+            error = function(e) {
+              showNotification(
+                paste(
+                  "Error importing BIOM file:", e$message,
+                  "\nEnsure the file is a valid BIOM format (v1 JSON or v2 HDF5)."
+                ),
+                type = "error", duration = 10
+              )
+              return(NULL)
+            }
+          )
+          if (is.null(phy_obj)) {
+            return()
+          }
+
+          # If a separate metadata CSV was also uploaded, merge it
+          if (!is.null(input$meta) && !is.null(input$meta$datapath)) {
+            if (wait_for_files(input$meta$datapath)) {
+              meta <- read.csv(input$meta$datapath, row.names = 1, check.names = FALSE)
+              sample_data(phy_obj) <- sample_data(meta)
+            }
+          }
+
+          # Validate that we have sample_data
+          if (is.null(sample_data(phy_obj, errorIfNULL = FALSE))) {
+            showNotification("BIOM file imported but contains no sample metadata. Please also upload a metadata CSV.",
+              type = "warning", duration = 10
+            )
+            return()
+          }
+        } else if (!is.null(input$asv) && !is.null(input$tax) && !is.null(input$meta) &&
+          !is.null(input$asv$datapath) && !is.null(input$tax$datapath) && !is.null(input$meta$datapath)) {
+          paths <- c(input$asv$datapath, input$tax$datapath, input$meta$datapath)
+          if (!wait_for_files(paths)) {
+            showNotification("Files are still uploading. Please wait a moment and try again.", type = "warning", duration = 6)
+            return()
+          }
+          otu <- read.csv(input$asv$datapath, row.names = 1, check.names = FALSE)
+          tax <- as.matrix(read.csv(input$tax$datapath, row.names = 1, check.names = FALSE))
+          meta <- read.csv(input$meta$datapath, row.names = 1, check.names = FALSE)
+          phy_obj <- phyloseq(
+            otu_table(as.matrix(otu), taxa_are_rows = TRUE),
+            tax_table(tax),
+            sample_data(meta)
+          )
+        } else {
+          showNotification("Please upload a complete dataset (a .rds file, a .biom file, or all three .csv files).", type = "warning", duration = 8)
           return()
         }
-        phy_obj <- readRDS(input$phylo$datapath)
-      } else if (!is.null(input$asv) && !is.null(input$tax) && !is.null(input$meta) &&
-                 !is.null(input$asv$datapath) && !is.null(input$tax$datapath) && !is.null(input$meta$datapath)) {
-        paths <- c(input$asv$datapath, input$tax$datapath, input$meta$datapath)
-        if (!wait_for_files(paths)) {
-          showNotification("Files are still uploading. Please wait a moment and try again.", type = "warning", duration = 6)
-          return()
-        }
-        otu <- read.csv(input$asv$datapath, row.names = 1, check.names = FALSE)
-        tax <- as.matrix(read.csv(input$tax$datapath, row.names = 1, check.names = FALSE))
-        meta <- read.csv(input$meta$datapath, row.names = 1, check.names = FALSE)
-        phy_obj <- phyloseq(
-          otu_table(as.matrix(otu), taxa_are_rows = TRUE),
-          tax_table(tax),
-          sample_data(meta)
-        )
-      } else {
-        showNotification("Please upload a complete dataset (either a .rds file or all three .csv files).", type = "warning", duration = 8)
-        return()
+
+        showNotification("Files processed successfully!", type = "message", duration = 5)
+        post_data_load(phy_obj)
+      },
+      error = function(e) {
+        showNotification(paste("Error processing uploaded files:", e$message), type = "error", duration = 10)
       }
-      
-      showNotification("Files processed successfully!", type = "message", duration = 5)
-      post_data_load(phy_obj)
-      
-    }, error = function(e) {
-      showNotification(paste("Error processing uploaded files:", e$message), type = "error", duration = 10)
-    })
+    )
   }
 
   # Common logic after any data is loaded
@@ -148,27 +223,31 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
 
     # Enable filter tab only
     # final_physeq will be created when user applies filters or clicks "Go to Analysis"
-    session$sendCustomMessage('enableTab', 'filter')
-    session$sendCustomMessage('showTab', 'filter')
+    session$sendCustomMessage("enableTab", "filter")
+    session$sendCustomMessage("showTab", "filter")
   }
 
   # UI to show the status of the data upload
   output$upload_status_ui <- renderUI({
     if (analysis_ready()) {
-      div(class = "ui positive message",
-          tags$i(class = "check circle icon"),
-          div(class = "content",
-              div(class = "header", "Data Ready for Analysis"),
-              p("Your data has been loaded and is ready. Proceed to the 'Filter' tab to continue.")
-          )
+      div(
+        class = "ui positive message",
+        tags$i(class = "check circle icon"),
+        div(
+          class = "content",
+          div(class = "header", "Data Ready for Analysis"),
+          p("Your data has been loaded and is ready. Proceed to the 'Filter' tab to continue.")
+        )
       )
     } else {
-      div(class = "ui info message",
-          tags$i(class = "info circle icon"),
-          div(class = "content",
-              div(class = "header", "Waiting for Data"),
-              p("Select your files and wait for the 'Upload Files' button to enable, or load a demo dataset.")
-          )
+      div(
+        class = "ui info message",
+        tags$i(class = "info circle icon"),
+        div(
+          class = "content",
+          div(class = "header", "Waiting for Data"),
+          p("Select your files and wait for the 'Upload Files' button to enable, or load a demo dataset.")
+        )
       )
     }
   })
