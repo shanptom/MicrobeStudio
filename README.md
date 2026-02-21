@@ -12,7 +12,7 @@
 
 A live version of the application is deployed on shinyapps.io.
 
-**[🚀 Launch MicrobeStudio](https://shanptom.shinyapps.io/MicrobeStudio)**
+**[🚀 Launch MicrobeStudio](https://microbestudio.pipettestopixels.com/)**
 
 ---
 ## 🚀 Features
