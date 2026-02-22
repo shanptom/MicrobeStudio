@@ -285,8 +285,8 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
       req(mantel_objs[[1]], analysis_ready())
 
       MantCorr.Sn <- quickcor(mantel_objs[[1]]$data_env, type = "upper", cor.test = TRUE, show.diag = TRUE) +
-        geom_tile() + scale_fill_distiller(palette = "RdBu", direction = 1) +
-        # geom_mark(sig.thres = 0.05, color = "black", size = 0) +
+        geom_tile(color = "white") + scale_fill_distiller(palette = "RdBu", direction = 1) +
+        # geom_mark(sig.thres = 0.05, color = "black", linewidth = 0) +
         anno_link(aes(colour = pd, size = rd), data = combined_table) +
         scale_size_manual(values = c(0.5, 1.5, 3)) +
         scale_colour_manual(values = c("#D95F02", "#1B9E77", "#A2A2A288")) +

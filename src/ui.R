@@ -1356,6 +1356,7 @@ ui <- semanticPage(
         class = "four wide column",
         div(
           class = "ui segment sidebar-segment",
+          style = "overflow: visible !important; z-index: 100;",
           h3("Setup"),
           div(
             class = "ui form",
