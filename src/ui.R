@@ -611,11 +611,6 @@ ui <- semanticPage(
         class = "home-footer",
         div(
           class = "footer-inner",
-          span(
-            "Developed by ",
-            tags$a(href = "https://shanptom.github.io", target = "_blank", "Shan Thomas")
-          ),
-          span(class = "footer-sep", "\u00B7"),
           tags$a(href = "https://github.com/shanptom/MicrobeStudio", target = "_blank", tags$i(class = "fab fa-github"), " GitHub"),
           span(class = "footer-sep", "\u00B7"),
           tags$a(href = "#", onclick = "TabManager.showTab('manual'); return false;", tags$i(class = "fas fa-book"), " User Guide")
