@@ -186,6 +186,17 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
           otu <- read.csv(input$asv$datapath, row.names = 1, check.names = FALSE)
           tax <- as.matrix(read.csv(input$tax$datapath, row.names = 1, check.names = FALSE))
           meta <- read.csv(input$meta$datapath, row.names = 1, check.names = FALSE)
+
+          # Validate before building the phyloseq object; orientation is auto-detected
+          # from the sample IDs in the metadata (taxa x samples is returned).
+          v <- validate_inputs(otu, meta, taxa_are_rows = NA)
+          if (!v$ok) {
+            showNotification(paste(v$errors, collapse = " "), type = "error", duration = 15)
+            return()
+          }
+          for (w in v$warnings) showNotification(w, type = "warning", duration = 12)
+          otu <- v$counts
+
           phy_obj <- phyloseq(
             otu_table(as.matrix(otu), taxa_are_rows = TRUE),
             tax_table(tax),
@@ -208,6 +219,16 @@ data_upload_server <- function(input, output, session, raw_physeq, ordering_rule
   # Common logic after any data is loaded
   post_data_load <- function(phy_obj) {
     req(phy_obj)
+
+    # Validate whatever was loaded (RDS, BIOM, CSV or demo): value checks and QC warnings
+    cnt <- as(otu_table(phy_obj), "matrix")
+    if (!taxa_are_rows(phy_obj)) cnt <- t(cnt)
+    v <- validate_inputs(cnt, as.data.frame(sample_data(phy_obj)), taxa_are_rows = TRUE)
+    if (!v$ok) {
+      showNotification(paste(v$errors, collapse = " "), type = "error", duration = 15)
+      return()
+    }
+    for (w in v$warnings) showNotification(w, type = "warning", duration = 12)
 
     # Store raw phyloseq data (not final yet)
     raw_physeq(phy_obj)

@@ -64,6 +64,7 @@ indicator_server <- function(input, output, session, final_physeq, analysis_read
             phyloseq_obj = ps,
             variable = input$indicator_var,
             group1 = input$indicator_group1,
+            group2 = input$indicator_group2,
             top_n = input$top_n_taxa,
             font_size = input$indicator_font_size
           )

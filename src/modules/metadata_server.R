@@ -284,12 +284,17 @@ metadata_server <- function(input, output, session, final_physeq, reactiveValues
     output$mantel_plot <- renderPlot({
       req(mantel_objs[[1]], analysis_ready())
 
-      MantCorr.Sn <- quickcor(mantel_objs[[1]]$data_env, type = "upper", cor.test = TRUE, show.diag = TRUE) +
-        geom_tile(color = "white") + scale_fill_distiller(palette = "RdBu", direction = 1) +
-        # geom_mark(sig.thres = 0.05, color = "black", linewidth = 0) +
-        anno_link(aes(colour = pd, size = rd), data = combined_table) +
-        scale_size_manual(values = c(0.5, 1.5, 3)) +
-        scale_colour_manual(values = c("#D95F02", "#1B9E77", "#A2A2A288")) +
+      # ggcor >= 1.0 API: qcorrplot(correlate(x)) replaces quickcor(x), and
+      # geom_couple() replaces anno_link(); the link table needs `spec` and `env` columns.
+      MantCorr.Sn <- qcorrplot(correlate(mantel_objs[[1]]$data_env, method = "pearson"),
+        type = "upper", diag = TRUE
+      ) +
+        geom_tile(color = "white") + scale_fill_distiller(palette = "RdBu", direction = 1, limits = c(-1, 1)) +
+        geom_couple(aes(colour = pd, size = rd), data = combined_table, curvature = 0.1) +
+        # Named values: an unnamed vector is matched by position to the levels that are
+        # present, which colours non-significant links as significant when a level is absent.
+        scale_size_manual(values = c("< 0.3" = 0.5, "0.3 - 0.6" = 1.5, ">= 0.6" = 3)) +
+        scale_colour_manual(values = c("< 0.01" = "#D95F02", "0.01 - 0.05" = "#1B9E77", ">= 0.05" = "#A2A2A288")) +
         guides(
           size = guide_legend(title = "Mantel's r", override.aes = list(colour = "grey35"), order = 2),
           colour = guide_legend(title = "Mantel's p", override.aes = list(size = 3), order = 1),

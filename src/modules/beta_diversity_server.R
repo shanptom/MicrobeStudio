@@ -248,86 +248,49 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
           if (method %in% c("unifrac", "wunifrac") && is.null(phyloseq::phy_tree(ps_sub, errorIfNULL = FALSE))) {
             stop("UniFrac requires a phylogenetic tree in the dataset.")
           }
-          dist_obj <- as.dist(phyloseq::distance(ps_sub, method = method))
+          dist_obj <- beta_distance(ps_sub, method)
 
           # Explicitly align metadata rows to distance labels
           labs <- labels(dist_obj)
           metadata <- data.frame(group = grp_vec, row.names = sample_names(ps_sub))
           metadata <- metadata[labs, , drop = FALSE]
 
-          # Helper to extract F and R2 robustly from adonis2 results
-          extract_stats <- function(ad2_res) {
-            df <- as.data.frame(ad2_res)
-            if (!nrow(df)) {
-              return(list(F = NA_real_, R2 = NA_real_, p = NA_real_))
-            }
-            # The first row corresponds to the model term 'group'
-            f_col <- if ("F" %in% colnames(df)) "F" else if ("F.Model" %in% colnames(df)) "F.Model" else NA
-            Fval <- if (!is.na(f_col)) suppressWarnings(as.numeric(df[[f_col]][1])) else NA_real_
-            R2val <- suppressWarnings(as.numeric(df[["R2"]][1]))
-            p_col_name <- "Pr(>F)"
-            pval <- if (p_col_name %in% colnames(df)) suppressWarnings(as.numeric(df[[p_col_name]][1])) else NA_real_
-            list(F = Fval, R2 = R2val, p = pval)
+          perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999L
+          strata_vec <- NULL
+          if (!is.null(input$permanova_strata) && nzchar(input$permanova_strata) && input$permanova_strata != "None") {
+            strata_vec <- as.data.frame(sample_data(ps_sub), stringsAsFactors = FALSE)[[input$permanova_strata]][match(labs, sample_names(ps_sub))]
           }
+          # Adjust pairwise p-values with the selected method; map to valid p.adjust keywords
+          padj <- if (!is.null(input$p_adjust_method)) input$p_adjust_method else "BH"
+          padj <- if (padj %in% c("BH", "BY")) padj else tolower(padj)
 
-          # Global PERMANOVA (not shown, but could be reported if needed)
-          # global_res <- vegan::adonis2(dist_obj ~ group, data = metadata, permutations = perm_n)
+          incProgress(0.3, detail = "Running PERMANOVA")
+          res <- run_permanova(dist_obj, metadata$group,
+            strata = strata_vec, permutations = perm_n, seed = 123L,
+            p_adjust = padj, permdisp = isTRUE(input$permdisp_enable)
+          )
+          out <- res$table
+          out$measure <- method
+          out <- out[, c("Groups", "measure", "F", "R2", "p.value", "p.adjusted", "n")]
+          # Provenance columns so an exported table is self-describing
+          out$permutations <- res$params$permutations
+          out$seed <- res$params$seed
+          out$p_adjust <- padj
+          out$strata <- if (is.null(strata_vec)) "none" else input$permanova_strata
 
-          # Optional: PERMDISP (homogeneity of dispersion)
-          if (!is.null(input$permdisp_enable) && isTRUE(input$permdisp_enable)) {
-            bd <- vegan::betadisper(dist_obj, metadata$group)
-            perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999
-            pd <- vegan::permutest(bd, permutations = perm_n)
-            pval_pd <- tryCatch(pd$tab[1, "Pr(>F)"], error = function(e) NA_real_)
-            permdisp_text(paste0("Global test p-value = ", signif(as.numeric(pval_pd), 4)))
+          # PERMDISP: a significant result means PERMANOVA differences may reflect
+          # differences in dispersion (spread), not only location
+          if (!is.null(res$permdisp)) {
+            permdisp_text(paste0(
+              "PERMDISP: F = ", signif(res$permdisp$F, 4), ", p = ", signif(res$permdisp$p.value, 4),
+              if (res$permdisp$p.value <= 0.05) " - dispersions differ; interpret PERMANOVA with caution." else " - no evidence of unequal dispersion.",
+              " (", perm_n, " permutations, seed ", res$params$seed, ")"
+            ))
           } else {
             permdisp_text("")
           }
 
-          # Pairwise PERMANOVA across group levels
-          lvls <- levels(metadata$group)
-          if (length(lvls) < 2) stop("Grouping variable must have at least two levels")
-
-          pairs <- utils::combn(lvls, 2, simplify = FALSE)
-          rows <- lapply(pairs, function(pr) {
-            # Subset samples belonging to the two groups
-            keep_samples <- rownames(metadata)[metadata$group %in% pr]
-            ps_pair <- prune_samples(keep_samples, ps_sub)
-            dist_pair <- as.dist(phyloseq::distance(ps_pair, method = method))
-            labs_p <- labels(dist_pair)
-            md_pair <- as.data.frame(sample_data(ps_pair), stringsAsFactors = FALSE)
-            md_p <- data.frame(
-              group = factor(md_pair[[grp_name]], levels = pr),
-              row.names = sample_names(ps_pair)
-            )
-            # Optional strata
-            if (!is.null(input$permanova_strata) && nzchar(input$permanova_strata) && input$permanova_strata != "None") {
-              md_p$Strata <- factor(md_pair[[input$permanova_strata]])
-            }
-            md_p <- md_p[labs_p, , drop = FALSE]
-            perm_n <- if (!is.null(input$permanova_permutations) && !is.na(input$permanova_permutations)) as.integer(input$permanova_permutations) else 999
-            if (!is.null(md_p$Strata)) {
-              ad2 <- vegan::adonis2(dist_pair ~ group, data = md_p, permutations = perm_n, strata = md_p$Strata)
-            } else {
-              ad2 <- vegan::adonis2(dist_pair ~ group, data = md_p, permutations = perm_n)
-            }
-            st <- extract_stats(ad2)
-            data.frame(
-              Groups = paste(pr[1], "vs", pr[2]),
-              measure = method,
-              F = st$F,
-              R2 = st$R2,
-              p.value = st$p,
-              stringsAsFactors = FALSE
-            )
-          })
-
-          out <- do.call(rbind, rows)
-          # Adjust p-values using selected method; map to valid p.adjust keywords
-          padj <- if (!is.null(input$p_adjust_method)) input$p_adjust_method else "BH"
-          method <- if (padj %in% c("BH", "BY")) padj else tolower(padj)
-          out$p.adjusted <- p.adjust(out$p.value, method = method)
-          # Add significance codes based on adjusted p-values
+          # Significance codes: adjusted p-values for pairs, raw p for the global test
           sig_code <- function(p) {
             if (is.na(p)) {
               return("")
@@ -346,7 +309,7 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
             }
             return("")
           }
-          out$Significance <- vapply(out$p.adjusted, sig_code, character(1))
+          out$Significance <- vapply(ifelse(is.na(out$p.adjusted), out$p.value, out$p.adjusted), sig_code, character(1))
           incProgress(0.9, detail = "Complete")
 
           permanova_result(out)
@@ -416,11 +379,11 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     req(final_physeq())
 
     n_samples <- nsamples(final_physeq())
-    max_perplexity <- floor((n_samples - 1) / 3)
-    max_perplexity <- max(5, min(max_perplexity, 50)) # reasonable bounds
+    # Rtsne requires 3 * perplexity < n_samples - 1 (and perplexity > 0)
+    max_perplexity <- max(1, min(ceiling((n_samples - 1) / 3) - 1, 50))
 
     sliderInput("tsne_perplexity", "Perplexity:",
-      min = 0, max = max_perplexity, value = 2
+      min = 1, max = max_perplexity, value = min(5, max_perplexity)
     )
   })
 
@@ -517,7 +480,7 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     updateSelectInput(session, "permanova_strata", selected = "None")
     updateNumericInput(session, "permanova_permutations", value = 999)
     updateSelectInput(session, "p_adjust_method", selected = "BH")
-    updateCheckboxInput(session, "permdisp_enable", value = FALSE)
+    updateCheckboxInput(session, "permdisp_enable", value = TRUE)
   })
 
   # Download ordination plot as PDF

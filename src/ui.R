@@ -1058,7 +1058,7 @@ ui <- semanticPage(
                 label("Distance Method"),
                 selectInput("dend_method", NULL,
                   choices = c(
-                    "euclidian", "manhattan", "canberra", "clark", "bray",
+                    "euclidean", "manhattan", "canberra", "clark", "bray",
                     "kulczynski", "jaccard", "gower", "altGower", "morisita",
                     "horn", "mountford", "raup", "binomial", "chao", "cao", "mahalanobis"
                   ),
@@ -1299,7 +1299,7 @@ ui <- semanticPage(
               ),
               div(
                 class = "field",
-                checkboxInput("permdisp_enable", "Check homogeneity of dispersion (PERMDISP)", value = FALSE)
+                checkboxInput("permdisp_enable", "Check homogeneity of dispersion (PERMDISP)", value = TRUE)
               ),
               div(
                 class = "two fields",
@@ -1499,8 +1499,8 @@ ui <- semanticPage(
           tags$ul(
             tags$li("Anonymous usage patterns (which tools and tabs you use)"),
             tags$li("Session duration and general workflow statistics"),
-            tags$li("Approximate geographic location (country/region only)"),
-            tags$li("Browser and operating system type")
+            tags$li("Browser and operating system family"),
+            tags$li("Collected only if the server operator enabled analytics")
           )
         ),
         div(
@@ -1508,7 +1508,7 @@ ui <- semanticPage(
           h4(tags$i(class = "fas fa-lock"), " What We Do NOT Collect"),
           tags$ul(
             tags$li("Your uploaded data files or their contents"),
-            tags$li("Personal information (name, email, IP address)"),
+            tags$li("Personal information (name, email) or your IP address / location"),
             tags$li("Analysis results or parameter choices"),
             tags$li("Any data that could identify you personally")
           )

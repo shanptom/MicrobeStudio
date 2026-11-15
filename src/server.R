@@ -34,11 +34,8 @@ source("src/modules/indicator_server.R", local = TRUE)
 telemetry <- initialize_telemetry()
 
 server <- function(input, output, session) {
-  # Start privacy-compliant telemetry session with location tracking
-  # Collects: anonymous session ID, country/region, browser/OS
-  # Does NOT collect: PII, uploaded data, input values, full IP addresses
-  session_uuid <- start_telemetry_session(telemetry, session)
-
+  # Telemetry is opt-in (MICROBESTUDIO_TELEMETRY=1) and only starts after the
+  # user consents (see data_consent handler below). `telemetry` is NULL when off.
   # End telemetry session on disconnect (calculate session duration)
   session$onSessionEnded(function() {
     end_telemetry_session(telemetry, session)
@@ -65,6 +62,9 @@ server <- function(input, output, session) {
   observeEvent(input$data_consent, {
     if (isTRUE(input$data_consent)) {
       data_consent_given(TRUE)
+      if (is.null(session$userData$session_uuid)) {
+        start_telemetry_session(telemetry, session)
+      }
       # Now navigate to the upload tab
       session$sendCustomMessage("showTab", "upload")
     }
@@ -76,6 +76,7 @@ server <- function(input, output, session) {
   # Initialize reactive values and variables
   raw_physeq <- reactiveVal() # Raw uploaded data (not processed)
   final_physeq <- reactiveVal() # Filtered/normalized data (ready for analysis)
+  count_physeq <- reactiveVal() # Integer counts behind final_physeq (rarefied, or filtered raw) for count-based methods
   ordering_rules <- reactiveValues()
   reactiveValues_envfit <- reactiveValues(transenv = NULL)
   selected_analysis <- reactiveVal(NULL)
@@ -187,10 +188,10 @@ server <- function(input, output, session) {
 
   # Call module servers (pass telemetry for consistent logging)
   data_upload_server(input, output, session, raw_physeq, ordering_rules, analysis_tabs, analysis_ready, telemetry)
-  filter_server(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry)
+  filter_server(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry, count_physeq)
   rarefaction_server(input, output, session, final_physeq, analysis_ready)
   abundance_server(input, output, session, final_physeq, ordering_rules, analysis_ready)
-  alpha_diversity_server(input, output, session, final_physeq, analysis_ready)
+  alpha_diversity_server(input, output, session, final_physeq, analysis_ready, count_physeq)
   beta_diversity_server(input, output, session, final_physeq, show_tsne, analysis_ready, telemetry)
   dendrogram_server(input, output, session, final_physeq, analysis_ready)
   metadata_server(input, output, session, final_physeq, reactiveValues_envfit, selected_analysis, analysis_ready, telemetry)

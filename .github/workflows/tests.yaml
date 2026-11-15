@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  testthat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install test dependencies
+        run: Rscript -e 'install.packages("testthat")'
+      - name: Run unit tests (core functions in R/)
+        run: Rscript tests/testthat.R
+      - name: Parse-check app sources
+        run: Rscript -e 'for (f in c("app.R", list.files("src", pattern="\\.R$", recursive=TRUE, full.names=TRUE), list.files("R", full.names=TRUE))) invisible(parse(f))'

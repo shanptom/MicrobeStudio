@@ -1,7 +1,7 @@
 # Filter Module Server
 # Handles taxonomic filtering, rarefaction, and TSS normalization
 
-filter_server <- function(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry = NULL) {
+filter_server <- function(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry = NULL, count_physeq = NULL) {
   # Taxa filter UI - based on raw uploaded data
   output$taxa_filters <- renderUI({
     req(raw_physeq())
@@ -83,6 +83,11 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
     } else if (input$doTSS) {
       ps <- transform_sample_counts(ps, function(x) x / sum(x))
       showNotification("TSS normalization applied.", type = "message")
+    }
+
+    # Keep integer counts for count-based methods (richness estimators, rarefaction curves)
+    if (!is.null(count_physeq)) {
+      count_physeq(if (isTRUE(input$doTSS) && !isTRUE(input$doRarefy)) raw_physeq() else ps)
     }
 
     # Create final_physeq (this triggers all analysis plots)
@@ -173,7 +178,15 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
       tryCatch(
         {
           req(raw_physeq())
-          saveRDS(raw_physeq(), file)
+          obj <- raw_physeq()
+          ranks <- colnames(tax_table(obj))
+          filters <- lapply(stats::setNames(ranks, ranks), function(r) input[[paste0("filter_", r)]])
+          attr(obj, "microbestudio_provenance") <- make_provenance(list(
+            export = "filtered phyloseq (before normalization)",
+            n_samples = nsamples(obj), n_taxa = ntaxa(obj),
+            excluded_taxa_filters = Filter(function(x) !is.null(x) && nzchar(x), filters)
+          ))
+          saveRDS(obj, file)
         },
         error = function(e) {
           showNotification(paste("Download failed:", e$message), type = "error")

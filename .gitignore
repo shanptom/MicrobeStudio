@@ -1,2 +1,6 @@
 .Rhistory
 manifest.json
+data/telemetry.sqlite*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
