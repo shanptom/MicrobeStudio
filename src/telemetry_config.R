@@ -1,21 +1,29 @@
 # ============================================================
 # TELEMETRY CONFIGURATION FOR MICROBESTUDIO
-# Privacy-Compliant Analytics for Multi-User Sessions
+# Opt-in, consent-gated, minimal usage analytics
 # ============================================================
 #
-# Data Collected:
-# - Anonymous session IDs (UUID)
-# - Geographic location (country/region from IP, anonymized)
-# - App usage patterns (tabs viewed, tools used)
-# - Session duration and timestamps
-# - User counts (unique sessions)
+# Telemetry is OFF by default. A server operator enables it by setting
+# the environment variable MICROBESTUDIO_TELEMETRY=1. Even then, nothing
+# is recorded for a session until the user clicks "I Agree" in the
+# consent dialog.
 #
-# Data NOT Collected:
-# - Personal Identifiable Information (PII)
-# - User uploaded data or file contents
-# - Input values or form data
-# - Full IP addresses (only country/region)
-# - Email, names, or any user credentials
+# Data collected (only when enabled AND consented):
+# - Random session ID (UUID)
+# - Tabs viewed and tools used (names only)
+# - Session start/end and duration
+# - Browser and OS family (parsed from the user agent; the raw
+#   user-agent string is NOT stored)
+#
+# Data NOT collected:
+# - IP addresses (full or truncated) or any geolocation; no request
+#   is made to third-party services
+# - Uploaded data, input values, parameters or analysis results
+# - Names, emails or credentials
+#
+# Storage: SQLite file whose path is MICROBESTUDIO_TELEMETRY_DB
+# (default "data/telemetry.sqlite"). The file is git-ignored; never
+# commit it.
 #
 # ============================================================
 
@@ -25,70 +33,14 @@ library(DBI)
 library(RSQLite)
 
 # ============================================================
-# ANONYMOUS IP GEOLOCATION (Privacy-Safe)
+# CONFIGURATION
 # ============================================================
-# Uses ipapi.co free API to get country/region from IP
-# IP address is NOT stored, only the location
-get_user_location <- function(session) {
-  tryCatch({
-    # Get client IP from session
-    client_ip <- session$request$REMOTE_ADDR
+telemetry_enabled <- function() {
+  tolower(Sys.getenv("MICROBESTUDIO_TELEMETRY", "")) %in% c("1", "true", "yes")
+}
 
-    # Don't geolocate local IPs
-    if (is.null(client_ip) || client_ip %in% c("127.0.0.1", "::1", "localhost")) {
-      return(list(
-        country = "Local",
-        region = "Development",
-        city = "Local",
-        ip_anonymized = "127.0.0.x"
-      ))
-    }
-
-    # Anonymize IP (remove last octet for IPv4, last 4 groups for IPv6)
-    ip_parts <- strsplit(client_ip, "\\.")[[1]]
-    if (length(ip_parts) == 4) {
-      ip_anonymized <- paste(ip_parts[1:3], collapse = ".")
-      ip_anonymized <- paste0(ip_anonymized, ".x")
-    } else {
-      # IPv6 - keep first 4 groups only
-      ip_parts_v6 <- strsplit(client_ip, ":")[[1]]
-      ip_anonymized <- paste(ip_parts_v6[1:min(4, length(ip_parts_v6))], collapse = ":")
-      ip_anonymized <- paste0(ip_anonymized, ":x:x:x:x")
-    }
-
-    # Fetch location from ipapi.co (free, no API key needed)
-    # Rate limit: 30,000 requests/month
-    response <- httr::GET(
-      paste0("https://ipapi.co/", client_ip, "/json/"),
-      httr::timeout(3)
-    )
-
-    if (httr::status_code(response) == 200) {
-      location_data <- httr::content(response, as = "parsed")
-
-      return(list(
-        country = location_data$country_name %||% "Unknown",
-        region = location_data$region %||% "Unknown",
-        city = location_data$city %||% "Unknown",
-        ip_anonymized = ip_anonymized
-      ))
-    } else {
-      return(list(
-        country = "Unknown",
-        region = "Unknown",
-        city = "Unknown",
-        ip_anonymized = ip_anonymized
-      ))
-    }
-  }, error = function(e) {
-    warning("Failed to get location: ", e$message)
-    return(list(
-      country = "Unknown",
-      region = "Unknown",
-      city = "Unknown",
-      ip_anonymized = "Unknown"
-    ))
-  })
+telemetry_db_path <- function() {
+  Sys.getenv("MICROBESTUDIO_TELEMETRY_DB", "data/telemetry.sqlite")
 }
 
 # Null coalescing operator
@@ -98,13 +50,15 @@ get_user_location <- function(session) {
 # INITIALIZE TELEMETRY WITH MULTI-USER SUPPORT
 # ============================================================
 initialize_telemetry <- function() {
-  # Create data directory if it doesn't exist
-  if (!dir.exists("data")) {
-    dir.create("data", recursive = TRUE)
+  # Opt-in: return NULL (telemetry fully disabled) unless the operator enabled it
+  if (!telemetry_enabled()) {
+    return(NULL)
   }
 
-  # Initialize SQLite storage with WAL mode for better concurrency
-  db_path <- "data/telemetry.sqlite"
+  db_path <- telemetry_db_path()
+  if (!dir.exists(dirname(db_path))) {
+    dir.create(dirname(db_path), recursive = TRUE)
+  }
 
   # Create storage object
   data_storage <- shiny.telemetry::DataStorageSQLite$new(db_path = db_path)
@@ -146,11 +100,6 @@ create_custom_tables <- function(con) {
       session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       session_end TIMESTAMP,
       session_duration_seconds INTEGER,
-      country TEXT,
-      region TEXT,
-      city TEXT,
-      ip_anonymized TEXT,
-      user_agent TEXT,
       browser TEXT,
       os TEXT,
       screen_resolution TEXT
@@ -163,10 +112,6 @@ create_custom_tables <- function(con) {
     ON user_sessions(session_start);
   ")
 
-  DBI::dbExecute(con, "
-    CREATE INDEX IF NOT EXISTS idx_country
-    ON user_sessions(country);
-  ")
 
   # Page views / tab navigation table
   DBI::dbExecute(con, "
@@ -205,65 +150,43 @@ create_custom_tables <- function(con) {
 # SESSION MANAGEMENT FUNCTIONS
 # ============================================================
 start_telemetry_session <- function(telemetry, session) {
-  # Generate unique anonymous session ID
+  # Called only after the user has given consent, and only when enabled
+  if (is.null(telemetry)) return(invisible(NULL))
+
   session_uuid <- uuid::UUIDgenerate()
   session_id <- session$token
 
-  # Get user location (anonymized)
-  location <- get_user_location(session)
+  # Browser/OS family only; the raw user-agent string is not stored
+  browser_info <- parse_user_agent(session$request$HTTP_USER_AGENT %||% "Unknown")
 
-  # Get browser/OS info from user agent
-  user_agent <- session$request$HTTP_USER_AGENT %||% "Unknown"
-  browser_info <- parse_user_agent(user_agent)
-
-  # Store session metadata in custom table
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
-
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
   tryCatch({
     DBI::dbExecute(con, "
       INSERT OR REPLACE INTO user_sessions
-      (session_id, session_uuid, session_start, country, region, city,
-       ip_anonymized, user_agent, browser, os)
-      VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?);
-    ", params = list(
-      session_id,
-      session_uuid,
-      location$country,
-      location$region,
-      location$city,
-      location$ip_anonymized,
-      user_agent,
-      browser_info$browser,
-      browser_info$os
-    ))
+      (session_id, session_uuid, session_start, browser, os)
+      VALUES (?, ?, datetime('now'), ?, ?);
+    ", params = list(session_id, session_uuid, browser_info$browser, browser_info$os))
   }, error = function(e) {
     warning("Failed to store session metadata: ", e$message)
   })
-
   DBI::dbDisconnect(con)
 
-  # Start shiny.telemetry session (with privacy settings)
   telemetry$start_session(
     track_inputs = FALSE,  # Don't track inputs (prevents PII)
     track_values = FALSE   # Don't track values (prevents user data)
   )
 
-  # Store session UUID in session object for later use
   session$userData$session_uuid <- session_uuid
   session$userData$session_start <- Sys.time()
 
-  # Log session start event
-  telemetry$log_custom_event("session_start", list(
-    session_uuid = session_uuid,
-    country = location$country,
-    region = location$region
-  ))
+  telemetry$log_custom_event("session_start", list(session_uuid = session_uuid))
 
-  return(session_uuid)
+  invisible(session_uuid)
 }
 
 # End session and calculate duration
 end_telemetry_session <- function(telemetry, session) {
+  if (is.null(telemetry)) return(invisible(NULL))
   session_id <- session$token
   session_uuid <- session$userData$session_uuid
   session_start <- session$userData$session_start
@@ -272,7 +195,7 @@ end_telemetry_session <- function(telemetry, session) {
     duration_seconds <- as.numeric(difftime(Sys.time(), session_start, units = "secs"))
 
     # Update session end time and duration
-    con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+    con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
 
     tryCatch({
       DBI::dbExecute(con, "
@@ -299,11 +222,13 @@ end_telemetry_session <- function(telemetry, session) {
 # ENHANCED EVENT LOGGING
 # ============================================================
 log_tab_view <- function(telemetry, session, tab_name) {
+  # No-op unless telemetry is enabled and this session consented
+  if (is.null(telemetry) || is.null(session$userData$session_uuid)) return(invisible(NULL))
   session_id <- session$token
   session_uuid <- session$userData$session_uuid
 
   # Log to custom table
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
 
   tryCatch({
     DBI::dbExecute(con, "
@@ -324,11 +249,13 @@ log_tab_view <- function(telemetry, session, tab_name) {
 }
 
 log_tool_usage <- function(telemetry, session, tool_name) {
+  # No-op unless telemetry is enabled and this session consented
+  if (is.null(telemetry) || is.null(session$userData$session_uuid)) return(invisible(NULL))
   session_id <- session$token
   session_uuid <- session$userData$session_uuid
 
   # Log to custom table
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
 
   tryCatch({
     DBI::dbExecute(con, "
@@ -394,29 +321,15 @@ parse_user_agent <- function(user_agent) {
 
 # Get total unique users (sessions)
 get_total_users <- function() {
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
   count <- DBI::dbGetQuery(con, "SELECT COUNT(DISTINCT session_uuid) as total FROM user_sessions;")
   DBI::dbDisconnect(con)
   return(count$total)
 }
 
-# Get users by country
-get_users_by_country <- function() {
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
-  result <- DBI::dbGetQuery(con, "
-    SELECT country, COUNT(DISTINCT session_uuid) as users
-    FROM user_sessions
-    WHERE country != 'Unknown'
-    GROUP BY country
-    ORDER BY users DESC;
-  ")
-  DBI::dbDisconnect(con)
-  return(result)
-}
-
 # Get most used tools
 get_most_used_tools <- function(limit = 10) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
   result <- DBI::dbGetQuery(con, sprintf("
     SELECT tool_name, COUNT(*) as usage_count
     FROM tool_usage
@@ -430,7 +343,7 @@ get_most_used_tools <- function(limit = 10) {
 
 # Get most visited tabs
 get_most_visited_tabs <- function(limit = 10) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
   result <- DBI::dbGetQuery(con, sprintf("
     SELECT tab_name, COUNT(*) as view_count
     FROM page_views
@@ -444,7 +357,7 @@ get_most_visited_tabs <- function(limit = 10) {
 
 # Get average session duration
 get_average_session_duration <- function() {
-  con <- DBI::dbConnect(RSQLite::SQLite(), "data/telemetry.sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), telemetry_db_path())
   result <- DBI::dbGetQuery(con, "
     SELECT AVG(session_duration_seconds) as avg_duration_seconds
     FROM user_sessions
@@ -458,7 +371,6 @@ get_average_session_duration <- function() {
 export_analytics_summary <- function() {
   list(
     total_users = get_total_users(),
-    users_by_country = get_users_by_country(),
     most_used_tools = get_most_used_tools(),
     most_visited_tabs = get_most_visited_tabs(),
     avg_session_duration_minutes = round(get_average_session_duration() / 60, 2)

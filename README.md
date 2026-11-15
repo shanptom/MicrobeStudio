@@ -120,7 +120,7 @@ Sample data is available in the `data/` directory for testing and learning purpo
 
 ## 🤝 Contact & Contributions
 
-For feedback, bug reports, or feature suggestions, please [open an issue](https://github.com/shanptom/PhyloFlow/issues) on the GitHub repository.
+For feedback, bug reports, or feature suggestions, please [open an issue](https://github.com/shanptom/microbestudio/issues) on the GitHub repository.
 
 ---
 

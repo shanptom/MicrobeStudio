@@ -34,11 +34,8 @@ source("src/modules/indicator_server.R", local = TRUE)
 telemetry <- initialize_telemetry()
 
 server <- function(input, output, session) {
-  # Start privacy-compliant telemetry session with location tracking
-  # Collects: anonymous session ID, country/region, browser/OS
-  # Does NOT collect: PII, uploaded data, input values, full IP addresses
-  session_uuid <- start_telemetry_session(telemetry, session)
-
+  # Telemetry is opt-in (MICROBESTUDIO_TELEMETRY=1) and only starts after the
+  # user consents (see data_consent handler below). `telemetry` is NULL when off.
   # End telemetry session on disconnect (calculate session duration)
   session$onSessionEnded(function() {
     end_telemetry_session(telemetry, session)
@@ -65,6 +62,9 @@ server <- function(input, output, session) {
   observeEvent(input$data_consent, {
     if (isTRUE(input$data_consent)) {
       data_consent_given(TRUE)
+      if (is.null(session$userData$session_uuid)) {
+        start_telemetry_session(telemetry, session)
+      }
       # Now navigate to the upload tab
       session$sendCustomMessage("showTab", "upload")
     }
