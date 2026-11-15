@@ -272,6 +272,11 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
           out <- res$table
           out$measure <- method
           out <- out[, c("Groups", "measure", "F", "R2", "p.value", "p.adjusted", "n")]
+          # Provenance columns so an exported table is self-describing
+          out$permutations <- res$params$permutations
+          out$seed <- res$params$seed
+          out$p_adjust <- padj
+          out$strata <- if (is.null(strata_vec)) "none" else input$permanova_strata
 
           # PERMDISP: a significant result means PERMANOVA differences may reflect
           # differences in dispersion (spread), not only location

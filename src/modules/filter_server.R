@@ -178,7 +178,15 @@ filter_server <- function(input, output, session, raw_physeq, final_physeq, orde
       tryCatch(
         {
           req(raw_physeq())
-          saveRDS(raw_physeq(), file)
+          obj <- raw_physeq()
+          ranks <- colnames(tax_table(obj))
+          filters <- lapply(stats::setNames(ranks, ranks), function(r) input[[paste0("filter_", r)]])
+          attr(obj, "microbestudio_provenance") <- make_provenance(list(
+            export = "filtered phyloseq (before normalization)",
+            n_samples = nsamples(obj), n_taxa = ntaxa(obj),
+            excluded_taxa_filters = Filter(function(x) !is.null(x) && nzchar(x), filters)
+          ))
+          saveRDS(obj, file)
         },
         error = function(e) {
           showNotification(paste("Download failed:", e$message), type = "error")
