@@ -48,6 +48,9 @@ Run the following script from the R console to install all required dependencies
 ```R
 source("scripts/install_dep.R")
 ```
+For a reproducible setup, `renv::restore()` installs the exact versions in `renv.lock` (R 4.6, Bioconductor 3.23).
+Some packages are compiled from source and need system libraries: `unixodbc` (for `odbc`, required by `shiny.telemetry`) and `gdal`, `geos`, `proj`, `udunits` (for `sf`, required by `phylosmith`). On Arch, `udunits` comes from the AUR.
+
 This script will install packages from CRAN, Bioconductor, and GitHub. If you encounter installation issues, check package compatibility or consult the GitHub issues page for troubleshooting tips.
 It also installs the **ragg** package, which MicrobeStudio uses to render plots on systems without an X11 display.
 
