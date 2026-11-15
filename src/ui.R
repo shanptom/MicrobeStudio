@@ -1058,7 +1058,7 @@ ui <- semanticPage(
                 label("Distance Method"),
                 selectInput("dend_method", NULL,
                   choices = c(
-                    "euclidian", "manhattan", "canberra", "clark", "bray",
+                    "euclidean", "manhattan", "canberra", "clark", "bray",
                     "kulczynski", "jaccard", "gower", "altGower", "morisita",
                     "horn", "mountford", "raup", "binomial", "chao", "cao", "mahalanobis"
                   ),

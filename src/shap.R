@@ -4,7 +4,9 @@ library(Matrix)
 library(tidyr)
 library(dplyr)
 
-run_shap_analysis <- function(phyloseq_obj, variable, group1, top_n = 10, font_size = 10) {
+run_shap_analysis <- function(phyloseq_obj, variable, group1, group2 = NULL, top_n = 10, font_size = 10, seed = 123) {
+  # Fixed seed: xgboost subsampling is stochastic, so results must be reproducible
+  set.seed(seed)
   
   # Ensure the phyloseq object has the specified variable
   if(!variable %in% colnames(sample_data(phyloseq_obj))) {
@@ -16,6 +18,7 @@ run_shap_analysis <- function(phyloseq_obj, variable, group1, top_n = 10, font_s
   
   # Transpose OTU table
   asv_counts <- as.data.frame(t(otu_table(ps_filtered)))
+  feature_cols <- colnames(asv_counts)  # taxa IDs, whatever naming scheme the data uses
   asv_counts$SampleID <- rownames(asv_counts)
   
   # Extract metadata
@@ -25,11 +28,17 @@ run_shap_analysis <- function(phyloseq_obj, variable, group1, top_n = 10, font_s
   # Merge
   df <- base::merge(asv_counts, meta, by = "SampleID")
   
+  # Restrict to the two compared groups when Group 2 is given
+  # (otherwise Group 1 is compared against all remaining samples)
+  if (!is.null(group2) && nzchar(group2)) {
+    df <- df[df[[variable]] %in% c(group1, group2), , drop = FALSE]
+  }
+
   # Create binary label
   df$binary_label <- ifelse(df[[variable]] == group1, 1, 0)
   
   # Create feature matrix (X) and target vector (y)
-  X <- df[, grepl("^ASV", colnames(df))]
+  X <- df[, feature_cols, drop = FALSE]
   y <- df$binary_label
   
   # Check for at least two classes

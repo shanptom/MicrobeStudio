@@ -416,11 +416,11 @@ beta_diversity_server <- function(input, output, session, final_physeq, show_tsn
     req(final_physeq())
 
     n_samples <- nsamples(final_physeq())
-    max_perplexity <- floor((n_samples - 1) / 3)
-    max_perplexity <- max(5, min(max_perplexity, 50)) # reasonable bounds
+    # Rtsne requires 3 * perplexity < n_samples - 1 (and perplexity > 0)
+    max_perplexity <- max(1, min(ceiling((n_samples - 1) / 3) - 1, 50))
 
     sliderInput("tsne_perplexity", "Perplexity:",
-      min = 0, max = max_perplexity, value = 2
+      min = 1, max = max_perplexity, value = min(5, max_perplexity)
     )
   })
 
