@@ -64,3 +64,14 @@ require_counts <- function(x, what = "this analysis") {
   }
   invisible(TRUE)
 }
+
+#' Pick the data that count-based richness estimators (Observed, Chao1, ACE,
+#' Fisher) should run on. They need integer counts, so TSS/CLR-normalised
+#' data must not be used.
+#' @return "final" if `final_mat` already holds counts, "counts" if only the
+#'   stored count table can be used, "none" if neither is valid.
+richness_source <- function(final_mat, count_mat = NULL) {
+  if (is_count_data(final_mat)) return("final")
+  if (!is.null(count_mat) && is_count_data(count_mat)) return("counts")
+  "none"
+}

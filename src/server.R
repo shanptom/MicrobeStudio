@@ -76,6 +76,7 @@ server <- function(input, output, session) {
   # Initialize reactive values and variables
   raw_physeq <- reactiveVal() # Raw uploaded data (not processed)
   final_physeq <- reactiveVal() # Filtered/normalized data (ready for analysis)
+  count_physeq <- reactiveVal() # Integer counts behind final_physeq (rarefied, or filtered raw) for count-based methods
   ordering_rules <- reactiveValues()
   reactiveValues_envfit <- reactiveValues(transenv = NULL)
   selected_analysis <- reactiveVal(NULL)
@@ -187,10 +188,10 @@ server <- function(input, output, session) {
 
   # Call module servers (pass telemetry for consistent logging)
   data_upload_server(input, output, session, raw_physeq, ordering_rules, analysis_tabs, analysis_ready, telemetry)
-  filter_server(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry)
+  filter_server(input, output, session, raw_physeq, final_physeq, ordering_rules, analysis_ready, telemetry, count_physeq)
   rarefaction_server(input, output, session, final_physeq, analysis_ready)
   abundance_server(input, output, session, final_physeq, ordering_rules, analysis_ready)
-  alpha_diversity_server(input, output, session, final_physeq, analysis_ready)
+  alpha_diversity_server(input, output, session, final_physeq, analysis_ready, count_physeq)
   beta_diversity_server(input, output, session, final_physeq, show_tsne, analysis_ready, telemetry)
   dendrogram_server(input, output, session, final_physeq, analysis_ready)
   metadata_server(input, output, session, final_physeq, reactiveValues_envfit, selected_analysis, analysis_ready, telemetry)

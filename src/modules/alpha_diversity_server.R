@@ -1,4 +1,16 @@
-alpha_diversity_server <- function(input, output, session, final_physeq, analysis_ready) {
+alpha_diversity_server <- function(input, output, session, final_physeq, analysis_ready, count_physeq = NULL) {
+  # Count-based richness estimators (Observed, Chao1, ACE, Fisher) are only valid
+  # on integer counts. If the analysis data were normalised (TSS), fall back to the
+  # stored counts instead of silently computing richness on proportions.
+  alpha_src <- reactive({
+    ps <- final_physeq()
+    req(ps)
+    src <- richness_source(as(otu_table(ps), "matrix"),
+      if (!is.null(count_physeq) && !is.null(count_physeq())) as(otu_table(count_physeq()), "matrix") else NULL)
+    list(ps = if (src == "counts") count_physeq() else ps, source = src)
+  })
+  alpha_ps <- function() alpha_src()$ps
+
   # Group selector
   output$alpha_group_selector <- renderUI({
     req(final_physeq())
@@ -64,14 +76,14 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
         # Base plot
         if (!is.null(input$alpha_group) && input$alpha_group != "None") {
           p <- plot_richness(
-            final_physeq(),
+            alpha_ps(),
             x = input$alpha_group,
             measures = input$alpha_index,
             scales = scale_type
           ) + geom_point(size = 5, alpha = 0.7) + theme_minimal() + theme(plot.margin = margin(0, 0, 0, 0))
         } else {
           p <- plot_richness(
-            final_physeq(),
+            alpha_ps(),
             measures = input$alpha_index,
             scales = scale_type
           ) + geom_point(size = 5, alpha = 0.7) + theme_minimal() + theme(plot.margin = margin(0, 0, 0, 0))
@@ -103,15 +115,6 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
             legend.title = element_text(size = input$alpha_beta_label_size),
             strip.text = element_text(size = input$alpha_beta_label_size)
           )
-
-        p +
-          theme(
-            axis.text = element_text(size = input$alpha_beta_label_size),
-            axis.title = element_text(size = input$alpha_beta_label_size),
-            legend.text = element_text(size = input$alpha_beta_label_size),
-            legend.title = element_text(size = input$alpha_beta_label_size),
-            strip.text = element_text(size = input$alpha_beta_label_size)
-          )
       },
       error = function(e) {
         plot.new()
@@ -132,7 +135,7 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
 
     tryCatch(
       {
-        ps <- final_physeq()
+        ps <- alpha_ps()
         rich <- estimate_richness(ps, measures = input$alpha_index)
         meta <- as.data.frame(sample_data(ps))
         group_var <- meta[[input$alpha_group]]
@@ -188,12 +191,12 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
           req(final_physeq(), input$alpha_index)
           scale_type <- if (isTRUE(input$flip_alpha)) "free_x" else "free"
           if (!is.null(input$alpha_group) && input$alpha_group != "None") {
-            p <- plot_richness(final_physeq(),
+            p <- plot_richness(alpha_ps(),
               x = input$alpha_group,
               measures = input$alpha_index, scales = scale_type
             )
           } else {
-            p <- plot_richness(final_physeq(), measures = input$alpha_index, scales = scale_type)
+            p <- plot_richness(alpha_ps(), measures = input$alpha_index, scales = scale_type)
           }
           p <- p + geom_point(size = 5, alpha = 0.7) + theme_minimal()
           if (!is.null(input$alpha_colour) && input$alpha_colour != "None") {
@@ -216,7 +219,7 @@ alpha_diversity_server <- function(input, output, session, final_physeq, analysi
       tryCatch(
         {
           req(final_physeq(), input$alpha_index)
-          rich <- estimate_richness(final_physeq(), measures = input$alpha_index)
+          rich <- estimate_richness(alpha_ps(), measures = input$alpha_index)
           rich$SampleID <- rownames(rich)
           utils::write.csv(rich, file, row.names = FALSE)
         },

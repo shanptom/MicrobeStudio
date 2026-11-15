@@ -1299,7 +1299,7 @@ ui <- semanticPage(
               ),
               div(
                 class = "field",
-                checkboxInput("permdisp_enable", "Check homogeneity of dispersion (PERMDISP)", value = FALSE)
+                checkboxInput("permdisp_enable", "Check homogeneity of dispersion (PERMDISP)", value = TRUE)
               ),
               div(
                 class = "two fields",

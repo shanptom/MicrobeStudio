@@ -41,3 +41,10 @@ test_that("require_counts blocks normalised data", {
   expect_silent(require_counts(cts))
   expect_error(require_counts(tss_counts(cts), "Chao1"), "raw integer counts")
 })
+
+test_that("richness_source avoids normalised data", {
+  expect_equal(richness_source(cts), "final")
+  expect_equal(richness_source(tss_counts(cts), cts), "counts")
+  expect_equal(richness_source(tss_counts(cts), NULL), "none")
+  expect_equal(richness_source(tss_counts(cts), tss_counts(cts)), "none")
+})
